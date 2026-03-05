@@ -314,13 +314,30 @@ ${model.framework}
 
 ${profileSection}${narrativeSection}${additionalSection}
 EMPLOYER ASSET TYPE CLASSIFICATION:
-When analyzing the candidate's work history, examine each previous employer's name, property name, and role description for the following keywords: "55+", "senior", "senior living", "active adult", "active living", "retirement", "age-restricted", "55 and older", "adult community".
-If any of these keywords appear, classify that employer/property as "55+ Asset Type".
-If the employer/property appears to be a new construction, build-to-rent, or lease-up, classify as "BTR / Lease-Up".
-Otherwise classify as "Conventional" or "Other".
+For each previous employer in the candidate's work history, determine the asset type using a two-step process:
+
+Step 1 ‚Äî Company Knowledge: Use your knowledge of the company or property name to determine what type of residential community they operate (e.g., 55+/active adult, conventional multifamily, BTR/lease-up, student housing, etc.). Consider what you know about the company's portfolio, website descriptions, community features, and market positioning.
+
+Step 2 ‚Äî Resume Keyword Confirmation: Also examine the resume text for the following keywords associated with each employer: "55+", "senior", "senior living", "active adult", "active living", "retirement", "age-restricted", "55 and older", "adult community".
+
+Classification Rules:
+- If your company knowledge OR resume keywords indicate 55+/senior/active adult, classify as "55+ Asset Type"
+- If the company or resume indicates new construction, build-to-rent, or lease-up, classify as "BTR / Lease-Up"
+- Otherwise classify as "Conventional" or "Other"
+
+Evidence Column: In the "evidence" field, describe what you know about the company that led to your classification (e.g., "Company operates 55+ active adult communities per their portfolio"). If you have no knowledge of the company, fall back to resume keyword evidence.
+
 Include this classification in the employerHistory array in your response.
 
 Also extract the candidate's location (city and state) from the resume if available.
+
+BEHAVIORAL INTERVIEW QUESTIONS:
+After scoring the candidate, generate 5-7 targeted behavioral interview questions. These questions should:
+1. Probe gaps between the resume and the Perfect Candidate Profile ‚Äî if the profile calls for a skill or experience that is missing or unclear on the resume, create a question to explore whether the candidate actually has that experience.
+2. Verify claims that seem strong but lack specifics ‚Äî if the resume makes impressive claims without hard numbers or details, create a question to dig deeper.
+3. Explore areas where the candidate scored low ‚Äî for each scoring category where the candidate lost significant points, create a question that gives them a chance to demonstrate that competency.
+4. Test culture and context fit ‚Äî especially for 55+ / Active Adult or Lease-Up contexts, ask questions that reveal whether they truly understand the environment.
+Each question should follow the STAR format prompt (Situation, Task, Action, Result) and include a brief note on WHY this question matters for this specific candidate.
 
 INSTRUCTIONS:
 Analyze the resume carefully. Score using the framework above. Be precise ‚Äî justify every score with actual resume evidence.
@@ -350,7 +367,10 @@ Return ONLY valid JSON with no additional text, markdown, or code blocks:
   "fitSummary": "2-3 sentence narrative on fit for this role",
   "narrativeAlignment": ${(profileText || narrative) ? '"1-2 sentences on alignment with the ideal candidate profile"' : 'null'},
   "employerHistory": [
-    { "employer": "company/property name", "role": "title held", "assetType": "55+ Asset Type | Conventional | BTR / Lease-Up | Other", "evidence": "keyword or reason for classification" }
+    { "employer": "company/property name", "assetType": "55+ Asset Type | Conventional | BTR / Lease-Up | Other", "evidence": "what is known about the company, or resume keyword if unknown" }
+  ],
+  "interviewQuestions": [
+    { "question": "behavioral interview question in STAR format", "why": "brief explanation of why this question matters for this candidate", "category": "gap | verify | low-score | culture-fit" }
   ]
 }`;
 }
@@ -427,9 +447,10 @@ app.get('/api/requisitions', (req, res) => {
 app.patch('/api/requisitions/:id', (req, res) => {
   const { id } = req.params;
   if (!requisitions[id]) return res.status(404).json({ error: 'Requisition not found' });
-  const { scoringModel, candidateProfile } = req.body;
+  const { scoringModel, candidateProfile, status } = req.body;
   if (scoringModel    !== undefined) requisitions[id].scoringModel     = scoringModel    || null;
   if (candidateProfile !== undefined) requisitions[id].candidateProfile = candidateProfile || null;
+  if (status           !== undefined) requisitions[id].status           = status          || 'active';
   saveData('requisitions.json', requisitions);
   res.json(requisitions[id]);
 });
@@ -449,7 +470,8 @@ app.post('/api/requisitions', (req, res) => {
     role,
     cityState,
     jobTitle: `${propertyName} ‚Äì Job ID ${jobId}`,
-    contextType: contextType || 'stabilized'
+    contextType: contextType || 'stabilized',
+    status: 'active'
   };
   requisitions[jobId] = entry;
   saveData('requisitions.json', requisitions);
@@ -633,6 +655,49 @@ app.listen(PORT, () => {
             <option value="">Select Job Requisition‚Ä¶</option>
           </select>
         </div>
+        <div class="toolbar-filter-wrap" id="toolbarFilterWrap">
+          <button class="btn btn-outline-white" id="toolbarFilterBtn">üîç Filter</button>
+          <div class="toolbar-filter-panel hidden" id="toolbarFilterPanel">
+            <div class="filter-panel-group">
+              <label class="filter-panel-label">Location</label>
+              <select id="locationFilter" class="filter-select">
+                <option value="">All Locations</option>
+                <option value="Florida">Florida</option>
+                <option value="Louisiana">Louisiana</option>
+                <option value="Maryland">Maryland</option>
+                <option value="New Jersey">New Jersey</option>
+                <option value="Tennessee">Tennessee</option>
+                <option value="Mississippi">Mississippi</option>
+              </select>
+            </div>
+            <div class="filter-panel-group">
+              <label class="filter-panel-label">Role</label>
+              <select id="roleFilter" class="filter-select">
+                <option value="">All Roles</option>
+                <option value="property manager">Property Manager</option>
+                <option value="leasing manager">Leasing Manager</option>
+                <option value="leasing professional">Leasing Professional</option>
+                <option value="service manager">Service Manager</option>
+                <option value="maintenance technician">Maintenance Technician</option>
+                <option value="housekeeper">Housekeeper</option>
+                <option value="groundskeeper">Groundskeeper</option>
+              </select>
+            </div>
+            <div class="filter-panel-group">
+              <label class="filter-panel-label">Keyword</label>
+              <select id="keywordFilter" class="filter-select">
+                <option value="">All Keywords</option>
+                <option value="travel">Travel</option>
+                <option value="relocation">Relocation</option>
+                <option value="weekends">Weekends</option>
+                <option value="55+">55+</option>
+                <option value="senior">Senior</option>
+                <option value="active adult">Active Adult</option>
+                <option value="lease up">Lease Up</option>
+              </select>
+            </div>
+          </div>
+        </div>
         <button class="btn btn-outline-white" id="addReqBtn">+ Add Requisition</button>
       </div>
     </div>
@@ -678,6 +743,13 @@ app.listen(PORT, () => {
           <div class="jd-row">
             <span class="jd-label">Context Type</span>
             <span class="jd-val" id="dContextType">‚Äî</span>
+          </div>
+          <div class="jd-row jd-row-select">
+            <span class="jd-label">Status</span>
+            <select class="jd-select" id="statusSelect">
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
           </div>
           <div class="jd-row jd-row-select">
             <span class="jd-label">Scoring Model</span>
@@ -834,29 +906,6 @@ app.listen(PORT, () => {
                 <button class="filter-pill" data-filter="DO NOT PURSUE">üî¥ Do Not Pursue</button>
               </div>
             </div>
-            <div class="filter-group">
-              <label class="filter-group-label">Location</label>
-              <select id="locationFilter" class="filter-select">
-                <option value="">All Locations</option>
-                <option value="Florida">Florida</option>
-                <option value="Louisiana">Louisiana</option>
-                <option value="Maryland">Maryland</option>
-                <option value="New Jersey">New Jersey</option>
-                <option value="Tennessee">Tennessee</option>
-                <option value="Mississippi">Mississippi</option>
-              </select>
-            </div>
-            <div class="filter-group">
-              <label class="filter-group-label">Filter</label>
-              <select id="keywordFilter" class="filter-select">
-                <option value="">All Keywords</option>
-                <option value="55+">55+</option>
-                <option value="senior">Senior</option>
-                <option value="active adult">Active Adult</option>
-                <option value="lease up">Lease Up</option>
-                <option value="property manager">Property Manager</option>
-              </select>
-            </div>
           </div>
         </div>
         <div id="candidateList"></div>
@@ -936,6 +985,7 @@ let pendingFiles      = [];   // Files queued for upload
 let allResults        = [];   // Results for current job
 let activeFilter      = 'all';
 let locationFilter    = '';
+let roleFilter        = '';
 let keywordFilter     = '';
 let scoringModels     = [];   // Loaded from server
 let candidateProfiles = [];   // Loaded from server
@@ -967,8 +1017,12 @@ const clearResultsBtn = $('clearResultsBtn');
 const additionalAttrsTa    = $('additionalAttrsTa');
 const additionalAttrsSaved = $('additionalAttrsSavedMsg');
 const saveAdditionalAttrsBtn = $('saveAdditionalAttrsBtn');
-const locationFilterEl = $('locationFilter');
-const keywordFilterEl  = $('keywordFilter');
+const locationFilterEl    = $('locationFilter');
+const roleFilterEl       = $('roleFilter');
+const keywordFilterEl    = $('keywordFilter');
+const toolbarFilterBtn   = $('toolbarFilterBtn');
+const toolbarFilterPanel = $('toolbarFilterPanel');
+const toolbarFilterWrap  = $('toolbarFilterWrap');
 
 // Stats
 const sTotalCandidates   = $('sTotalCandidates');
@@ -1053,8 +1107,10 @@ async function selectRequisition(jobId) {
   // Reset filters
   activeFilter = 'all';
   locationFilter = '';
+  roleFilter = '';
   keywordFilter = '';
   if (locationFilterEl) locationFilterEl.value = '';
+  if (roleFilterEl) roleFilterEl.value = '';
   if (keywordFilterEl) keywordFilterEl.value = '';
   document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
   const allPill = document.querySelector('.filter-pill[data-filter="all"]');
@@ -1074,9 +1130,10 @@ async function selectRequisition(jobId) {
   $('dJobId').textContent        = `#${job.id}`;
   $('dContextType').textContent  = contextTypeLabel(job.contextType);
 
-  // Set scoring model + candidate profile dropdowns
-  $('scoringModelSelect').value     = job.scoringModel     || '';
-  $('candidateProfileSelect').value = job.candidateProfile || '';
+  // Set status, scoring model + candidate profile dropdowns
+  $('statusSelect').value            = job.status           || 'active';
+  $('scoringModelSelect').value      = job.scoringModel     || '';
+  $('candidateProfileSelect').value  = job.candidateProfile || '';
 
   // Load narrative (Perfect Candidate Profile text)
   const { narrative } = await api(`/api/narrative/${jobId}`);
@@ -1114,6 +1171,13 @@ function setupEventListeners() {
     if (!currentJobId) return;
     const val = $('scoringModelSelect').value;
     await api(`/api/requisitions/${currentJobId}`, 'PATCH', { scoringModel: val || null });
+  });
+
+  // Status dropdown ‚Äî save selection to server
+  $('statusSelect').addEventListener('change', async () => {
+    if (!currentJobId) return;
+    const val = $('statusSelect').value;
+    await api(`/api/requisitions/${currentJobId}`, 'PATCH', { status: val || 'active' });
   });
 
   // Candidate profile dropdown ‚Äî save selection + offer to populate textarea
@@ -1189,6 +1253,29 @@ function setupEventListeners() {
   // Candidate detail modal
   $('candidateModalClose').addEventListener('click',  () => closeCandidateModal());
   $('candidateOverlay').addEventListener('click',     () => closeCandidateModal());
+
+  // Toolbar filter button ‚Äî toggle dropdown panel
+  if (toolbarFilterBtn) {
+    toolbarFilterBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toolbarFilterPanel.classList.toggle('hidden');
+    });
+  }
+
+  // Close filter panel when clicking outside
+  document.addEventListener('click', (e) => {
+    if (toolbarFilterWrap && !toolbarFilterWrap.contains(e.target)) {
+      toolbarFilterPanel.classList.add('hidden');
+    }
+  });
+
+  // Role filter dropdown
+  if (roleFilterEl) {
+    roleFilterEl.addEventListener('change', () => {
+      roleFilter = roleFilterEl.value;
+      renderCandidateList();
+    });
+  }
 
   // Filter pills
   document.querySelectorAll('.filter-pill').forEach(pill => {
@@ -1444,6 +1531,11 @@ function renderCandidateList() {
   // Location filter
   if (locationFilter) {
     filtered = filtered.filter(r => matchesLocation(r, locationFilter));
+  }
+
+  // Role filter
+  if (roleFilter) {
+    filtered = filtered.filter(r => matchesRole(r, roleFilter));
   }
 
   // Keyword filter
@@ -1714,7 +1806,6 @@ function openCandidateModal(c) {
         <thead>
           <tr>
             <th>Employer / Property</th>
-            <th>Role</th>
             <th>Asset Type</th>
             <th>Evidence</th>
           </tr>
@@ -1723,13 +1814,29 @@ function openCandidateModal(c) {
           ${c.employerHistory.map(e => `
             <tr>
               <td>${esc(e.employer)}</td>
-              <td>${esc(e.role)}</td>
               <td><span class="asset-type-badge ${assetTypeBadgeClass(e.assetType)}">${esc(e.assetType)}</span></td>
               <td class="evidence-cell">${esc(e.evidence || '‚Äî')}</td>
             </tr>
           `).join('')}
         </tbody>
       </table>
+    </div>` : ''}
+
+    ${c.interviewQuestions && c.interviewQuestions.length ? `
+    <div class="detail-section">
+      <div class="detail-section-title">üéØ Behavioral Interview Questions</div>
+      <div class="interview-questions-list">
+        ${c.interviewQuestions.map((q, i) => `
+          <div class="interview-question-card">
+            <div class="iq-header">
+              <span class="iq-number">${i + 1}</span>
+              <span class="iq-category-badge iq-cat-${(q.category || 'gap').replace(/[^a-z]/g, '')}">${esc(categoryLabel(q.category))}</span>
+            </div>
+            <div class="iq-question">${esc(q.question)}</div>
+            <div class="iq-why"><strong>Why ask this:</strong> ${esc(q.why)}</div>
+          </div>
+        `).join('')}
+      </div>
     </div>` : ''}
 
     <div style="text-align:right;margin-top:8px">
@@ -1859,6 +1966,16 @@ function assetTypeBadgeClass(type) {
   return 'asset-other';
 }
 
+function categoryLabel(cat) {
+  const map = {
+    'gap': 'Profile Gap',
+    'verify': 'Verify Claim',
+    'low-score': 'Low Score Area',
+    'culture-fit': 'Culture Fit'
+  };
+  return map[(cat || '').toLowerCase()] || 'Interview';
+}
+
 function recToClass(rec) {
   const map = {
     'TOP TIER':            'top-tier',
@@ -1907,6 +2024,15 @@ function matchesLocation(result, location) {
     return re.test(fields);
   }
   return false;
+}
+
+function matchesRole(result, role) {
+  const r = role.toLowerCase();
+  const fields = [
+    result.currentTitle,
+    ...(result.employerHistory || []).map(e => e.role)
+  ].filter(Boolean).join(' ').toLowerCase();
+  return fields.includes(r);
 }
 
 function matchesKeyword(result, keyword) {
@@ -2022,6 +2148,44 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* ‚îÄ‚îÄ Toolbar Filter Dropdown ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.toolbar-filter-wrap {
+  position: relative;
+}
+
+.toolbar-filter-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background: #fff;
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(0,0,0,.18);
+  padding: 18px 22px;
+  min-width: 250px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.toolbar-filter-panel.hidden {
+  display: none;
+}
+
+.filter-panel-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.filter-panel-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
 }
 
 .view-as-group {
@@ -2543,6 +2707,95 @@ body {
 .asset-other {
   background: var(--bg);
   color: var(--muted);
+}
+
+/* ‚îÄ‚îÄ Interview Questions ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.interview-questions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.interview-question-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  padding: 14px 16px;
+}
+
+.iq-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.iq-number {
+  width: 24px;
+  height: 24px;
+  background: var(--navy);
+  color: #fff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.iq-category-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.iq-cat-gap {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.iq-cat-verify {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.iq-cat-lowscore {
+  background: #fce4ec;
+  color: #c62828;
+}
+
+.iq-cat-culturefit {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.iq-cat-interview {
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.iq-question {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--navy);
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
+
+.iq-why {
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.iq-why strong {
+  color: var(--text);
 }
 
 /* ‚îÄ‚îÄ Candidate Cards ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
