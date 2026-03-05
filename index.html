@@ -1,0 +1,3073 @@
+========== server.js ==========
+require('dotenv').config();
+const express = require('express');
+const multer = require('multer');
+const Anthropic = require('@anthropic-ai/sdk');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// ‚îÄ‚îÄ‚îÄ Anthropic Client ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY
+});
+
+// ‚îÄ‚îÄ‚îÄ File Upload Config ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadsDir),
+  filename: (req, file, cb) => cb(null, `${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${file.originalname}`)
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB per file
+  fileFilter: (req, file, cb) => {
+    const allowed = /\.(pdf|doc|docx|txt)$/i;
+    if (allowed.test(file.originalname)) {
+      cb(null, true);
+    } else {
+      cb(null, false); // silently skip unsupported types
+    }
+  }
+});
+
+// ‚îÄ‚îÄ‚îÄ Data Persistence ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+const DATA_DIR = path.join(__dirname, 'data');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+function loadData(filename, defaults) {
+  const filepath = path.join(DATA_DIR, filename);
+  if (fs.existsSync(filepath)) {
+    try { return JSON.parse(fs.readFileSync(filepath, 'utf8')); }
+    catch (e) { return defaults; }
+  }
+  return defaults;
+}
+
+function saveData(filename, data) {
+  fs.writeFileSync(path.join(DATA_DIR, filename), JSON.stringify(data, null, 2));
+}
+
+// ‚îÄ‚îÄ‚îÄ Initial Data ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+const defaultRequisitions = {
+  "433": {
+    id: "433",
+    propertyName: "RISE Viera",
+    role: "Property Manager",
+    cityState: "Melbourne, FL",
+    jobTitle: "RISE Viera ‚Äì Job ID 433",
+    contextType: "55+"
+  },
+  "388": {
+    id: "388",
+    propertyName: "RISE St. Augustine",
+    role: "Property Manager",
+    cityState: "St. Augustine, FL",
+    jobTitle: "RISE St. Augustine ‚Äì Job ID 388",
+    contextType: "lease-up"
+  }
+};
+
+let requisitions    = loadData('requisitions.json', defaultRequisitions);
+let narratives      = loadData('narratives.json', {});
+let additionalAttrs = loadData('additionalAttrs.json', {});
+let results         = loadData('results.json', {});
+
+// Save defaults on first run
+if (!fs.existsSync(path.join(DATA_DIR, 'requisitions.json'))) {
+  saveData('requisitions.json', requisitions);
+}
+
+// ‚îÄ‚îÄ‚îÄ Middleware ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+app.use(express.static('public'));
+app.use(express.json({ limit: '10mb' }));
+
+// ‚îÄ‚îÄ‚îÄ Scoring Models ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+const SCORING_MODELS = {
+  '55plus-leaseup': {
+    id: '55plus-leaseup',
+    name: '55+ Active Adult ‚Äì Lease Up',
+    categories: [
+      { key: 'scopeAccountability', label: 'Scope & Accountability', max: 25 },
+      { key: 'financialOwnership',  label: 'Financial Ownership',    max: 20 },
+      { key: 'performanceImpact',   label: 'Performance Impact',     max: 20 },
+      { key: 'leadershipTeamDev',   label: 'Leadership & Team Dev.', max: 20 },
+      { key: 'contextMatch',        label: 'Context Match',          max: 15 },
+    ],
+    framework: `
+SCORING MODEL: 55+ Active Adult ‚Äì Lease Up (0‚Äì100 points)
+
+1. SCOPE & ACCOUNTABILITY (0‚Äì25 points)
+What level have they truly owned?
+- GM / PM full P&L ownership: 25 pts
+- Acting PM / strong APM: 18‚Äì22 pts
+- Leasing Manager only: 10‚Äì15 pts
+- Leasing Professional only: 0‚Äì8 pts
+Look for: "Owned property operations", "Responsible for budget/NOI", "Led team of X", unit counts (150+ vs 300+)
+RULE: No scope clarity ‚Üí cap at 15.
+
+2. FINANCIAL OWNERSHIP (0‚Äì20 points)
+Did they truly manage money?
+- Clear budget/NOI ownership + outcomes: 18‚Äì20 pts
+- Mentions budget involvement: 12‚Äì16 pts
+- No financial language: 0‚Äì8 pts
+Keywords: NOI, Budget, Variance, Forecast, CapEx, Delinquency, AR/AP, Expense control, Reforecast
+RULE: Any hard financial numbers = automatic bump.
+
+3. PERFORMANCE IMPACT (0‚Äì20 points)
+Did they move metrics?
+- Quantified results with before/after: 18‚Äì20 pts
+- General performance claims: 12‚Äì15 pts
+- No outcomes: 0‚Äì10 pts
+Look for: Occupancy changes, Lease-up stabilization, Delinquency reduction, Renewal % increase, Lead-to-lease improvements, Reputation score improvements
+RULE: No numbers on resume ‚Üí cap at 12.
+
+4. LEADERSHIP & TEAM DEVELOPMENT (0‚Äì20 points)
+Can they build and sustain a team?
+- Led team of 5+ with coaching/development: 18‚Äì20 pts
+- Supervised small team: 12‚Äì16 pts
+- Individual contributor: 0‚Äì10 pts
+Look for: Team size, Hiring/firing, Coaching, Cross-functional leadership, Culture building, Conflict resolution, Emotional Intelligence
+RULE: No team size listed ‚Üí cap at 14.
+
+5. CONTEXT MATCH (0‚Äì15 points)
+For 55+ Active Adult: Senior/active adult experience, hospitality language, community engagement
+For Lease-Up: New construction, pre-leasing, stabilization, marketing activation
+- Direct experience match: 13‚Äì15 pts
+- Adjacent experience: 8‚Äì12 pts
+- No relevant exposure: 0‚Äì7 pts
+
+AUTOMATIC PENALTIES:
+- Repeated <12-month stints (non-project): -5 to -10 pts
+- No PM systems listed (Entrata/Yardi/etc.): -3 to -5 pts
+- No unit counts listed: -3 pts
+- Inflated title without proof: -5 pts
+
+SCORE INTERPRETATION:
+90‚Äì100 ‚Üí TOP TIER ‚Äî Secondary Screening
+80‚Äì89  ‚Üí STRONG ‚Äî Secondary Screening
+65‚Äì79  ‚Üí MAYBE ‚Äî Secondary Screening
+50‚Äì64  ‚Üí POSSIBLE LOWER ROLE ‚Äî Consider for a different or lower-level role
+<50    ‚Üí DO NOT PURSUE`,
+    jsonScores: `"scores": {
+    "scopeAccountability": { "score": <0-25>, "rationale": "1-2 sentences", "evidence": "direct quote or fact" },
+    "financialOwnership":  { "score": <0-20>, "rationale": "1-2 sentences", "evidence": "direct quote or fact" },
+    "performanceImpact":   { "score": <0-20>, "rationale": "1-2 sentences", "evidence": "direct quote or fact" },
+    "leadershipTeamDev":   { "score": <0-20>, "rationale": "1-2 sentences", "evidence": "direct quote or fact" },
+    "contextMatch":        { "score": <0-15>, "rationale": "1-2 sentences", "evidence": "direct quote or fact" }
+  }`
+  },
+
+  'btr-construction': {
+    id: 'btr-construction',
+    name: 'BTR ‚Äì Construction',
+    categories: [
+      { key: 'scopeAccountability',   label: 'Scope & Accountability',   max: 20 },
+      { key: 'financialOwnership',    label: 'Financial Ownership',       max: 15 },
+      { key: 'leaseUpPerformance',    label: 'Lease-Up Performance',      max: 30 },
+      { key: 'leadershipTeamBuild',   label: 'Leadership & Team Build',   max: 20 },
+      { key: 'constructionBTRContext',label: 'Construction/BTR Context',  max: 15 },
+    ],
+    framework: `
+SCORING MODEL: BTR ‚Äì Construction (0‚Äì100 points)
+This is a startup operator role ‚Äî not a lifestyle or stabilized asset role.
+What matters most: Lease-up velocity, construction coordination, team build from zero, financial control under pressure.
+
+1. SCOPE & ACCOUNTABILITY (0‚Äì20 points)
+- Led lease-up as GM/PM: 18‚Äì20 pts
+- APM / strong #2 in lease-up: 12‚Äì17 pts
+- No lease-up ownership: 0‚Äì11 pts
+Look for: PM/GM title, full operational ownership, lease-up responsibility, 150+ units, team oversight.
+RULE: No lease-up clarity ‚Üí cap at 11.
+
+2. FINANCIAL OWNERSHIP (0‚Äì15 points)
+Control burn rate during lease-up.
+- Owned full budget + reporting: 13‚Äì15 pts
+- Assisted / partial exposure: 8‚Äì12 pts
+- No financial depth: 0‚Äì7 pts
+Look for: Budget creation, forecasting, variance reporting, expense control, rent roll management.
+
+3. LEASE-UP PERFORMANCE IMPACT (0‚Äì30 points) ‚Üê MOST IMPORTANT
+- Clear lease-up wins with quantified results: 25‚Äì30 pts
+- Lease-up experience but limited metrics: 18‚Äì24 pts
+- Exposure but not ownership: 10‚Äì17 pts
+- No lease-up: 0‚Äì9 pts
+Look for: "Lease-up from 0%", stabilized in X months, pre-leasing strategy, concession management, occupancy growth metrics.
+RULE: Resume does not clearly state lease-up ‚Üí cap at 15.
+
+4. LEADERSHIP & TEAM BUILD (0‚Äì20 points)
+Must hire and build culture from scratch.
+- Built or rebuilt team successfully from zero: 18‚Äì20 pts
+- Managed existing team (not startup): 12‚Äì17 pts
+- Minimal team leadership: 0‚Äì11 pts
+Look for: Built teams, hired full staff, rebuilt underperforming teams, coaching, conflict resolution, Emotional Intelligence.
+
+5. CONSTRUCTION / BTR / STARTUP CONTEXT (0‚Äì15 points)
+- Direct construction-to-operations experience: 13‚Äì15 pts
+- Indirect exposure: 8‚Äì12 pts
+- No development coordination: 0‚Äì7 pts
+Look for: New construction handoff, punch walks, warranty claims, vendor coordination, development team partnership, BTR/SFR knowledge.
+
+AUTOMATIC PENALTIES:
+- Repeated <12-month stints (non-project): -5 to -10 pts
+- No PM systems listed: -3 pts
+- No unit counts listed: -3 pts
+- No lease-up clarity: -5 pts
+
+SCORE INTERPRETATION:
+90‚Äì100 ‚Üí TOP TIER ‚Äî Secondary Screening
+80‚Äì89  ‚Üí STRONG ‚Äî Secondary Screening
+65‚Äì79  ‚Üí MAYBE ‚Äî Secondary Screening
+50‚Äì64  ‚Üí POSSIBLE LOWER ROLE ‚Äî Consider for a different or lower-level role
+<50    ‚Üí DO NOT PURSUE`,
+    jsonScores: `"scores": {
+    "scopeAccountability":    { "score": <0-20>, "rationale": "1-2 sentences", "evidence": "direct quote or fact" },
+    "financialOwnership":     { "score": <0-15>, "rationale": "1-2 sentences", "evidence": "direct quote or fact" },
+    "leaseUpPerformance":     { "score": <0-30>, "rationale": "1-2 sentences", "evidence": "direct quote or fact" },
+    "leadershipTeamBuild":    { "score": <0-20>, "rationale": "1-2 sentences", "evidence": "direct quote or fact" },
+    "constructionBTRContext": { "score": <0-15>, "rationale": "1-2 sentences", "evidence": "direct quote or fact" }
+  }`
+  }
+};
+
+// ‚îÄ‚îÄ‚îÄ Candidate Profiles ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+const CANDIDATE_PROFILES = {
+  '55plus-leaseup': {
+    id: '55plus-leaseup',
+    name: '55+ Active Living ‚Äì Lease Up',
+    text: `The Candidate Who Already Runs the Place in Their Head
+
+Full P&L. Budget in one hand. Culture in the other. The kind of person who doesn't just know what NOI is ‚Äî they know which line item is quietly bleeding it every quarter and which service request backlog is about to turn into renewal fallout six months from now.
+
+When they say they "led a team," they don't mean they scheduled lunches and approved PTO. They mean:
+- They hired.
+- They coached.
+- They performance-managed.
+- They rebuilt a leasing team that was quietly sabotaging occupancy with inconsistent follow-up.
+- They turned a maintenance department from reactive ticket-closers into resident-facing relationship managers.
+
+You'll see it in their metrics: Occupancy didn't just go up ‚Äî it stabilized after turnover spikes. Delinquency didn't just drop ‚Äî it stayed down after rent increases. Renewals didn't just improve ‚Äî they correlated with service recovery SLAs they personally implemented. They talk in outcomes, not adjectives.
+
+They Treat Financials Like Resident Experience Data. Weak candidates separate "Operations" / "Finance" / "Customer Experience." Strong Active Adult PMs know those are the same conversation. They've reforecasted mid-year when vendor costs crept. They've defended CapEx tied to amenity usage trends. They've reduced bad debt by redesigning communication cadence ‚Äî not just enforcing policy.
+
+They know: Every missed work order is a future non-renewal. Every non-renewal is an acquisition cost problem. Every acquisition cost problem is an NOI problem.
+
+They Don't "Run Events." They Run Community Systems. If they've worked in 55+ or Active Adult before, you'll hear hospitality language show up naturally: Community engagement, Lifestyle programming, Resident councils, Service recovery, Reputation management. Because in Active Adult, the building doesn't succeed because of granite countertops. It succeeds because residents feel known, conflicts get mediated before they escalate, and loneliness gets noticed before it becomes move-out intent.
+
+This person has already handled: Interpersonal resident conflict, Family member escalations, Health-related accommodation conversations, Volunteer committees that think they run the building, Online reviews written at 11:42pm after book club ‚Äî and still protected the brand.
+
+They Can Scale People ‚Äî Not Just Fill Roles. You'll see they've led 5+ consistently. Not just assigned tasks ‚Äî developed successors. Assistant Managers promoted. Leasing Consultants cross-trained. Maintenance Supervisors looped into resident communication. Because they understand what you're building inside RISE University and your People & Talent Development model: The property isn't the system. The leadership pipeline is. And the PM is the node where onboarding, manager enablement, training readiness, retention risk and service culture either connect ‚Äî or silently fail.`
+  },
+  'btr-construction': {
+    id: 'btr-construction',
+    name: 'BTR ‚Äì Construction/Lease Up',
+    text: `The PM Who Opens Communities ‚Äî Not Just Runs Them
+
+They've stood in a leasing office with no rent roll, no trained staff, unfinished punch items, marketing spend already live, and an occupancy target that assumes nothing goes wrong ‚Äî and still hit velocity.
+
+They don't describe lease-ups as: "We grew occupancy." They say: "We stabilized from 0‚Äì92% in 11 months after cutting concessions in Phase 2 and shifting our conversion strategy from digital-first to appointment-driven once traffic normalized."
+
+Because they understand: Lease-up is math. Every unleased home carries operating cost, marketing cost, staffing cost, interest carry, and investor expectation. And every day it sits vacant is a financial decision.
+
+They Speak Construction ‚Äî Not Just Customer Service. They've walked punch lists, negotiated move-in timing around CO delays, chased warranty claims, partnered with development on phase release timing, and told marketing to hold traffic because the homes weren't actually ready. They know when to open the funnel, tighten concessions, delay move-ins, or throttle leasing velocity to avoid operational collapse. Weak Property Managers wait for construction updates. Strong BTR PMs ask: "If Phase 3 slips two weeks, what's our revised pre-lease strategy?"
+
+They Build Teams While the Plane Is Taking Off. They didn't inherit a leasing consultant ‚Äî they hired one, trained one, corrected one, replaced one. While answering resident complaints, warranty issues, vendor invoices, marketing leads, and development emails asking why absorption slowed. They've built maintenance from zero, leasing processes from scratch, daily reporting cadence, traffic tracking discipline, and CRM hygiene that actually supports forecasting. Because in lease-up: Bad follow-up is vacancy.
+
+They Protect the Budget While Growing Occupancy. They've forecasted mid-lease-up, defended staffing requests tied to absorption, managed concessions by phase, controlled expense creep during vendor onboarding, and protected rent roll growth without buying occupancy. They understand: Leasing velocity without expense discipline just moves the loss forward faster.
+
+Their Resume Says: "I've opened communities." "I stabilized in X months." "I built the team." "I partnered with construction." "I drove occupancy aggressively." Which is exactly what this asset type needs ‚Äî because this role isn't maintaining performance. It's manufacturing it.`
+  }
+};
+
+function buildScoringPrompt(job, narrative, additionalAttributes) {
+  // Select the scoring model ‚Äî fall back to 55plus-leaseup as default
+  const modelKey = job.scoringModel || '55plus-leaseup';
+  const model    = SCORING_MODELS[modelKey] || SCORING_MODELS['55plus-leaseup'];
+
+  // Build the candidate profile section
+  const profileKey  = job.candidateProfile;
+  const profileText = profileKey && CANDIDATE_PROFILES[profileKey]
+    ? CANDIDATE_PROFILES[profileKey].text
+    : null;
+
+  const profileSection = profileText
+    ? `IDEAL CANDIDATE PROFILE (selected by recruiting leadership):\n${profileText}\n`
+    : '';
+
+  const narrativeSection = narrative
+    ? `PERFECT CANDIDATE PROFILE NOTES:\n${narrative}\n`
+    : '';
+
+  const additionalSection = additionalAttributes
+    ? `ADDITIONAL ATTRIBUTES / CUSTOM QUALIFIERS:\n${additionalAttributes}\n`
+    : '';
+
+  return `You are a senior recruiting analyst evaluating a candidate for a ${job.role} role at ${job.propertyName} in ${job.cityState} (Job ID: ${job.id}).
+
+${model.framework}
+
+${profileSection}${narrativeSection}${additionalSection}
+EMPLOYER ASSET TYPE CLASSIFICATION:
+When analyzing the candidate's work history, examine each previous employer's name, property name, and role description for the following keywords: "55+", "senior", "senior living", "active adult", "active living", "retirement", "age-restricted", "55 and older", "adult community".
+If any of these keywords appear, classify that employer/property as "55+ Asset Type".
+If the employer/property appears to be a new construction, build-to-rent, or lease-up, classify as "BTR / Lease-Up".
+Otherwise classify as "Conventional" or "Other".
+Include this classification in the employerHistory array in your response.
+
+Also extract the candidate's location (city and state) from the resume if available.
+
+INSTRUCTIONS:
+Analyze the resume carefully. Score using the framework above. Be precise ‚Äî justify every score with actual resume evidence.
+
+Return ONLY valid JSON with no additional text, markdown, or code blocks:
+
+{
+  "candidateName": "Full Name or Unknown",
+  "candidateEmail": "email or null",
+  "candidatePhone": "phone or null",
+  "candidateLocation": "City, State from resume or null",
+  "currentTitle": "most recent job title",
+  "currentCompany": "most recent employer",
+  "yearsExperience": <number>,
+  "unitCounts": "largest property managed or null",
+  "pmSystems": ["list", "of", "systems"],
+  "scoringModel": "${modelKey}",
+  ${model.jsonScores},
+  "penalties": [{ "reason": "description", "deduction": <number> }],
+  "subtotal": <sum of category scores>,
+  "totalPenalties": <sum of deductions>,
+  "totalScore": <subtotal minus totalPenalties, min 0>,
+  "recommendation": "TOP TIER or STRONG or MAYBE or POSSIBLE LOWER ROLE or DO NOT PURSUE",
+  "recommendationLabel": "Secondary Screening or Secondary Screening or Secondary Screening or Possible Lower Role or Do Not Pursue",
+  "keyStrengths": ["strength 1", "strength 2", "strength 3"],
+  "keyGaps": ["gap 1", "gap 2"],
+  "fitSummary": "2-3 sentence narrative on fit for this role",
+  "narrativeAlignment": ${(profileText || narrative) ? '"1-2 sentences on alignment with the ideal candidate profile"' : 'null'},
+  "employerHistory": [
+    { "employer": "company/property name", "role": "title held", "assetType": "55+ Asset Type | Conventional | BTR / Lease-Up | Other", "evidence": "keyword or reason for classification" }
+  ]
+}`;
+}
+
+// ‚îÄ‚îÄ‚îÄ Analyze a single resume file ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+async function analyzeResumeFile(file, job, narrative, additionalAttributes) {
+  const fileBuffer = fs.readFileSync(file.path);
+  const ext = path.extname(file.originalname).toLowerCase();
+  const prompt = buildScoringPrompt(job, narrative, additionalAttributes);
+  let messageContent;
+
+  if (ext === '.pdf') {
+    const base64Data = fileBuffer.toString('base64');
+    messageContent = [
+      {
+        type: 'document',
+        source: { type: 'base64', media_type: 'application/pdf', data: base64Data }
+      },
+      { type: 'text', text: prompt }
+    ];
+  } else if (ext === '.docx' || ext === '.doc') {
+    const mammoth = require('mammoth');
+    const { value: text } = await mammoth.extractRawText({ buffer: fileBuffer });
+    messageContent = [{ type: 'text', text: `RESUME CONTENT:\n\n${text}\n\n${prompt}` }];
+  } else {
+    // Plain text
+    const text = fileBuffer.toString('utf8');
+    messageContent = [{ type: 'text', text: `RESUME CONTENT:\n\n${text}\n\n${prompt}` }];
+  }
+
+  const response = await anthropic.messages.create({
+    model: 'claude-opus-4-6',
+    max_tokens: 2048,
+    temperature: 0,   // deterministic scoring ‚Äî same resume = same score every time
+    messages: [{ role: 'user', content: messageContent }]
+  });
+
+  const rawText = response.content[0].text.trim();
+
+  // Strip any markdown code fences if Claude wrapped the JSON
+  const cleaned = rawText.replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('No JSON found in AI response');
+
+  const result = JSON.parse(jsonMatch[0]);
+  result.fileName   = file.originalname;
+  result.analyzedAt = new Date().toISOString();
+  result.id         = crypto.randomUUID();
+  return result;
+}
+
+// ‚îÄ‚îÄ‚îÄ API Routes ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+
+// GET scoring models (metadata only ‚Äî no full framework text)
+app.get('/api/scoring-models', (req, res) => {
+  res.json(Object.values(SCORING_MODELS).map(m => ({
+    id: m.id, name: m.name, categories: m.categories
+  })));
+});
+
+// GET candidate profiles (includes text for textarea population)
+app.get('/api/candidate-profiles', (req, res) => {
+  res.json(Object.values(CANDIDATE_PROFILES).map(p => ({
+    id: p.id, name: p.name, text: p.text
+  })));
+});
+
+// GET all requisitions
+app.get('/api/requisitions', (req, res) => {
+  res.json(Object.values(requisitions));
+});
+
+// PATCH requisition ‚Äî update scoringModel / candidateProfile
+app.patch('/api/requisitions/:id', (req, res) => {
+  const { id } = req.params;
+  if (!requisitions[id]) return res.status(404).json({ error: 'Requisition not found' });
+  const { scoringModel, candidateProfile } = req.body;
+  if (scoringModel    !== undefined) requisitions[id].scoringModel     = scoringModel    || null;
+  if (candidateProfile !== undefined) requisitions[id].candidateProfile = candidateProfile || null;
+  saveData('requisitions.json', requisitions);
+  res.json(requisitions[id]);
+});
+
+// POST new requisition
+app.post('/api/requisitions', (req, res) => {
+  const { propertyName, role, cityState, jobId, contextType } = req.body;
+  if (!propertyName || !role || !cityState || !jobId) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  if (requisitions[jobId]) {
+    return res.status(409).json({ error: 'Job ID already exists' });
+  }
+  const entry = {
+    id: jobId,
+    propertyName,
+    role,
+    cityState,
+    jobTitle: `${propertyName} ‚Äì Job ID ${jobId}`,
+    contextType: contextType || 'stabilized'
+  };
+  requisitions[jobId] = entry;
+  saveData('requisitions.json', requisitions);
+  res.json(entry);
+});
+
+// GET narrative
+app.get('/api/narrative/:jobId', (req, res) => {
+  res.json({ narrative: narratives[req.params.jobId] || '' });
+});
+
+// POST narrative
+app.post('/api/narrative/:jobId', (req, res) => {
+  narratives[req.params.jobId] = req.body.narrative || '';
+  saveData('narratives.json', narratives);
+  res.json({ success: true });
+});
+
+// GET additional attributes
+app.get('/api/additional-attributes/:jobId', (req, res) => {
+  res.json({ text: additionalAttrs[req.params.jobId] || '' });
+});
+
+// POST additional attributes
+app.post('/api/additional-attributes/:jobId', (req, res) => {
+  additionalAttrs[req.params.jobId] = req.body.text || '';
+  saveData('additionalAttrs.json', additionalAttrs);
+  res.json({ success: true });
+});
+
+// GET results for a job
+app.get('/api/results/:jobId', (req, res) => {
+  res.json(results[req.params.jobId] || []);
+});
+
+// DELETE results for a job
+app.delete('/api/results/:jobId', (req, res) => {
+  delete results[req.params.jobId];
+  saveData('results.json', results);
+  res.json({ success: true });
+});
+
+// DELETE a single candidate result
+app.delete('/api/results/:jobId/:candidateId', (req, res) => {
+  const { jobId, candidateId } = req.params;
+  if (results[jobId]) {
+    results[jobId] = results[jobId].filter(r => r.id !== candidateId);
+    saveData('results.json', results);
+  }
+  res.json({ success: true });
+});
+
+// PATCH ‚Äî update candidate status (hire / pipeline / null)
+app.patch('/api/results/:jobId/:candidateId', (req, res) => {
+  const { jobId, candidateId } = req.params;
+  const { status } = req.body; // 'hire' | 'pipeline' | null
+  if (results[jobId]) {
+    const candidate = results[jobId].find(r => r.id === candidateId);
+    if (candidate) {
+      candidate.status = status || null;
+      saveData('results.json', results);
+      return res.json({ success: true, status: candidate.status });
+    }
+  }
+  res.status(404).json({ error: 'Candidate not found' });
+});
+
+// POST analyze resumes (SSE streaming)
+app.post('/api/analyze/:jobId', upload.array('resumes', 50), async (req, res) => {
+  const { jobId } = req.params;
+  const job = requisitions[jobId];
+
+  if (!job) {
+    return res.status(404).json({ error: 'Job requisition not found' });
+  }
+
+  const files = req.files || [];
+  if (files.length === 0) {
+    return res.status(400).json({ error: 'No supported files uploaded (PDF, DOCX, TXT)' });
+  }
+
+  // Set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  const sendEvent = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const narrative = narratives[jobId] || '';
+  const additionalAttrsText = additionalAttrs[jobId] || '';
+  const analysisResults = [];
+  const errors = [];
+
+  // Keep-alive ping every 20s
+  const keepAlive = setInterval(() => {
+    res.write(':keepalive\n\n');
+  }, 20000);
+
+  try {
+    // Get existing filenames to avoid re-analyzing
+    const existing = results[jobId] || [];
+    const existingFileNames = new Set(existing.map(r => r.fileName));
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      sendEvent({ type: 'progress', current: i + 1, total: files.length, fileName: file.originalname });
+
+      if (existingFileNames.has(file.originalname)) {
+        sendEvent({ type: 'skipped', fileName: file.originalname, reason: 'Already analyzed' });
+        try { fs.unlinkSync(file.path); } catch (e) {}
+        continue;
+      }
+
+      try {
+        const result = await analyzeResumeFile(file, job, narrative, additionalAttrsText);
+        analysisResults.push(result);
+        sendEvent({ type: 'result', result });
+      } catch (err) {
+        console.error(`Error analyzing ${file.originalname}:`, err.message);
+        errors.push({ fileName: file.originalname, error: err.message });
+        sendEvent({ type: 'error', fileName: file.originalname, error: err.message });
+      }
+
+      // Clean up temp file
+      try { fs.unlinkSync(file.path); } catch (e) {}
+    }
+
+    // Merge + sort all results
+    const merged = [...existing, ...analysisResults]
+      .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
+    results[jobId] = merged;
+    saveData('results.json', results);
+
+    sendEvent({ type: 'complete', newCount: analysisResults.length, errors });
+  } catch (err) {
+    console.error('Analysis error:', err);
+    sendEvent({ type: 'fatal', error: err.message });
+  } finally {
+    clearInterval(keepAlive);
+    res.end();
+  }
+});
+
+// ‚îÄ‚îÄ‚îÄ Start Server ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+app.listen(PORT, () => {
+  console.log(`\n‚úÖ RISE Resume Ranking running at http://localhost:${PORT}`);
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.warn('‚ö†Ô∏è  ANTHROPIC_API_KEY not set ‚Äî AI analysis will fail. Set it in a .env file.\n');
+  }
+});
+
+========== public/index.html ==========
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RISE Resume Ranking</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- ‚îÄ‚îÄ HEADER ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="header-left">
+        <div class="logo-mark">R</div>
+        <div class="header-titles">
+          <h1 class="header-h1">RISE Resume Ranking</h1>
+          <span class="header-sub">AI-Powered Candidate Evaluation</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="view-as-group">
+          <label class="view-as-label">View As</label>
+          <select id="requisitionSelect" class="req-select">
+            <option value="">Select Job Requisition‚Ä¶</option>
+          </select>
+        </div>
+        <button class="btn btn-outline-white" id="addReqBtn">+ Add Requisition</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ‚îÄ‚îÄ EMPTY STATE ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ -->
+  <div id="emptyState" class="empty-state">
+    <div class="empty-inner">
+      <div class="empty-icon">üìã</div>
+      <h2>Select a Job Requisition</h2>
+      <p>Choose a requisition from the <strong>View As</strong> dropdown above to begin reviewing candidates.</p>
+    </div>
+  </div>
+
+  <!-- ‚îÄ‚îÄ MAIN CONTENT ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ -->
+  <main id="mainContent" class="main hidden">
+
+    <!-- Row 1: Job Details + Stats -->
+    <div class="grid g2 mb">
+
+      <div class="card">
+        <div class="card-hdr">
+          <span class="card-icon">üè¢</span>
+          <h3>Requisition Details</h3>
+        </div>
+        <div class="job-details">
+          <div class="jd-row">
+            <span class="jd-label">Property Name</span>
+            <span class="jd-val" id="dPropertyName">‚Äî</span>
+          </div>
+          <div class="jd-row">
+            <span class="jd-label">Role</span>
+            <span class="jd-val" id="dRole">‚Äî</span>
+          </div>
+          <div class="jd-row">
+            <span class="jd-label">City / State</span>
+            <span class="jd-val" id="dCityState">‚Äî</span>
+          </div>
+          <div class="jd-row">
+            <span class="jd-label">Job ID</span>
+            <span class="jd-val" id="dJobId">‚Äî</span>
+          </div>
+          <div class="jd-row">
+            <span class="jd-label">Context Type</span>
+            <span class="jd-val" id="dContextType">‚Äî</span>
+          </div>
+          <div class="jd-row jd-row-select">
+            <span class="jd-label">Scoring Model</span>
+            <select class="jd-select" id="scoringModelSelect">
+              <option value="">‚Äî Select Model ‚Äî</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-hdr">
+          <span class="card-icon">üìä</span>
+          <h3>Analysis Summary</h3>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="stat-num" id="sTotalCandidates">0</div>
+            <div class="stat-lbl">Total Candidates</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-num green" id="sTopTier">0</div>
+            <div class="stat-lbl">Top Tier</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-num blue" id="sStrong">0</div>
+            <div class="stat-lbl">Strong</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-num amber" id="sMaybe">0</div>
+            <div class="stat-lbl">Maybe</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-num orange" id="sPossibleLowerRole">0</div>
+            <div class="stat-lbl">Possible Lower Role</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-num red" id="sDoNotPursue">0</div>
+            <div class="stat-lbl">Do Not Pursue</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Row 2: Perfect Candidate Profile -->
+    <div class="card mb">
+      <div class="card-hdr">
+        <span class="card-icon">üë§</span>
+        <h3>Perfect Candidate Profile</h3>
+      </div>
+      <div class="profile-select-row">
+        <label class="profile-select-label">Select Profile</label>
+        <select class="jd-select" id="candidateProfileSelect">
+          <option value="">‚Äî Select Profile ‚Äî</option>
+        </select>
+      </div>
+      <textarea
+        id="narrativeTa"
+        class="narrative-ta"
+        rows="8"
+        placeholder="Select a profile above to auto-populate, or type your own ideal candidate description‚Ä¶"
+      ></textarea>
+      <div class="narrative-footer">
+        <span id="narrativeSavedMsg" class="saved-msg hidden">‚úì Saved</span>
+        <button class="btn btn-navy" id="saveNarrativeBtn">Save</button>
+      </div>
+    </div>
+
+    <!-- Row 3: Additional Attributes -->
+    <div class="card mb">
+      <div class="card-hdr">
+        <span class="card-icon">‚úçÔ∏è</span>
+        <h3>Additional Attributes</h3>
+        <span class="card-subtitle">Add any other qualifiers, deal-breakers, or custom notes for this role.</span>
+      </div>
+      <textarea
+        id="additionalAttrsTa"
+        class="narrative-ta"
+        rows="4"
+        placeholder="Add any additional qualifiers, must-haves, deal-breakers, or role-specific notes here‚Ä¶"
+      ></textarea>
+      <div class="narrative-footer">
+        <span id="additionalAttrsSavedMsg" class="saved-msg hidden">‚úì Saved</span>
+        <button class="btn btn-navy" id="saveAdditionalAttrsBtn">Save</button>
+      </div>
+    </div>
+
+    <!-- Row 3: Upload -->
+    <div class="card mb">
+      <div class="card-hdr">
+        <span class="card-icon">üìÑ</span>
+        <h3>Upload Resumes</h3>
+        <span class="card-subtitle">PDF, DOCX, or TXT ‚Äî upload as many as needed</span>
+      </div>
+
+      <div class="upload-zone" id="uploadZone">
+        <input type="file" id="fileInput" accept=".pdf,.doc,.docx,.txt" multiple hidden />
+        <div class="upload-zone-inner">
+          <div class="upload-arrow">‚¨Ü</div>
+          <p class="upload-primary">Drag &amp; drop resumes here</p>
+          <p class="upload-or">‚Äî or ‚Äî</p>
+          <button class="btn btn-secondary" id="browseBtn">Browse Files</button>
+          <p class="upload-types">PDF ¬∑ DOCX ¬∑ TXT accepted</p>
+        </div>
+      </div>
+
+      <div id="fileList" class="file-list hidden"></div>
+
+      <div class="upload-actions" id="uploadActions" style="display:none">
+        <button class="btn btn-outline-danger" id="clearFilesBtn">Remove All</button>
+        <button class="btn btn-primary" id="analyzeBtn">üîç Analyze Resumes</button>
+      </div>
+
+      <!-- Progress -->
+      <div id="progressWrap" class="progress-wrap hidden">
+        <div class="progress-meta">
+          <span id="progressLabel">Analyzing‚Ä¶</span>
+          <span id="progressCount">0 / 0</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progressFill" style="width:0%"></div>
+        </div>
+        <div id="progressLog" class="progress-log"></div>
+      </div>
+    </div>
+
+    <!-- Row 4: Rankings -->
+    <div class="card" id="resultsCard">
+      <div class="card-hdr">
+        <span class="card-icon">üèÜ</span>
+        <h3>Candidate Rankings</h3>
+        <div class="card-hdr-actions">
+          <button class="btn btn-sm btn-outline" id="clearResultsBtn" style="display:none">Clear All Results</button>
+        </div>
+      </div>
+
+      <div id="resultsEmpty" class="results-empty">
+        <p>No candidates analyzed yet. Upload resumes and click <strong>Analyze Resumes</strong> to begin.</p>
+      </div>
+
+      <div id="resultsWrap" class="hidden">
+        <!-- Filter Section -->
+        <div class="filter-section">
+          <div class="filter-row">
+            <div class="filter-group">
+              <label class="filter-group-label">Recommendation</label>
+              <div class="filter-pills">
+                <button class="filter-pill active" data-filter="all">All</button>
+                <button class="filter-pill" data-filter="TOP TIER">üü¢ Top Tier</button>
+                <button class="filter-pill" data-filter="STRONG">üîµ Strong</button>
+                <button class="filter-pill" data-filter="MAYBE">üü° Maybe</button>
+                <button class="filter-pill" data-filter="POSSIBLE LOWER ROLE">üü† Possible Lower Role</button>
+                <button class="filter-pill" data-filter="DO NOT PURSUE">üî¥ Do Not Pursue</button>
+              </div>
+            </div>
+            <div class="filter-group">
+              <label class="filter-group-label">Location</label>
+              <select id="locationFilter" class="filter-select">
+                <option value="">All Locations</option>
+                <option value="Florida">Florida</option>
+                <option value="Louisiana">Louisiana</option>
+                <option value="Maryland">Maryland</option>
+                <option value="New Jersey">New Jersey</option>
+                <option value="Tennessee">Tennessee</option>
+                <option value="Mississippi">Mississippi</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label class="filter-group-label">Filter</label>
+              <select id="keywordFilter" class="filter-select">
+                <option value="">All Keywords</option>
+                <option value="55+">55+</option>
+                <option value="senior">Senior</option>
+                <option value="active adult">Active Adult</option>
+                <option value="lease up">Lease Up</option>
+                <option value="property manager">Property Manager</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div id="candidateList"></div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ‚îÄ‚îÄ ADD REQUISITION MODAL ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ -->
+  <div id="addReqModal" class="modal hidden">
+    <div class="modal-overlay" id="addReqOverlay"></div>
+    <div class="modal-box">
+      <div class="modal-hdr">
+        <h3>Add New Job Requisition</h3>
+        <button class="modal-x" id="addReqClose">‚úï</button>
+      </div>
+      <div class="modal-body">
+        <div class="fg">
+          <label class="fl">Property Name <span class="req-star">*</span></label>
+          <input type="text" class="fi" id="nPropertyName" placeholder="e.g., RISE Gainesville" />
+        </div>
+        <div class="fg">
+          <label class="fl">Role Being Posted <span class="req-star">*</span></label>
+          <input type="text" class="fi" id="nRole" placeholder="e.g., Property Manager" />
+        </div>
+        <div class="fg">
+          <label class="fl">City / State <span class="req-star">*</span></label>
+          <input type="text" class="fi" id="nCityState" placeholder="e.g., Gainesville, FL" />
+        </div>
+        <div class="fg">
+          <label class="fl">Job ID <span class="req-star">*</span></label>
+          <input type="text" class="fi" id="nJobId" placeholder="e.g., 512" />
+        </div>
+        <div class="fg">
+          <label class="fl">Context Type</label>
+          <select class="fi" id="nContextType">
+            <option value="55+">55+ / Active Adult</option>
+            <option value="lease-up">Lease-Up</option>
+            <option value="stabilized" selected>Stabilized Asset</option>
+          </select>
+        </div>
+        <div id="addReqError" class="form-error hidden"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-outline" id="addReqCancel">Cancel</button>
+        <button class="btn btn-navy" id="addReqSave">Add Requisition</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ‚îÄ‚îÄ CANDIDATE DETAIL MODAL ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ -->
+  <div id="candidateModal" class="modal hidden">
+    <div class="modal-overlay" id="candidateOverlay"></div>
+    <div class="modal-box modal-lg">
+      <div class="modal-hdr">
+        <h3 id="candidateModalTitle">Candidate Analysis</h3>
+        <button class="modal-x" id="candidateModalClose">‚úï</button>
+      </div>
+      <div class="modal-body" id="candidateModalBody">
+        <!-- populated by JS -->
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
+
+========== public/app.js ==========
+/* ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
+   RISE Resume Ranking ‚Äî Frontend Application
+   ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê */
+
+// ‚îÄ‚îÄ State ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+let currentJobId      = null;
+let pendingFiles      = [];   // Files queued for upload
+let allResults        = [];   // Results for current job
+let activeFilter      = 'all';
+let locationFilter    = '';
+let keywordFilter     = '';
+let scoringModels     = [];   // Loaded from server
+let candidateProfiles = [];   // Loaded from server
+
+// ‚îÄ‚îÄ DOM Refs ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+const $ = (id) => document.getElementById(id);
+const emptyState      = $('emptyState');
+const mainContent     = $('mainContent');
+const reqSelect       = $('requisitionSelect');
+const narrativeTa     = $('narrativeTa');
+const narrativeSaved  = $('narrativeSavedMsg');
+const saveNarrBtn     = $('saveNarrativeBtn');
+const uploadZone      = $('uploadZone');
+const fileInput       = $('fileInput');
+const browseBtn       = $('browseBtn');
+const fileList        = $('fileList');
+const uploadActions   = $('uploadActions');
+const analyzeBtn      = $('analyzeBtn');
+const clearFilesBtn   = $('clearFilesBtn');
+const progressWrap    = $('progressWrap');
+const progressFill    = $('progressFill');
+const progressLabel   = $('progressLabel');
+const progressCount   = $('progressCount');
+const progressLog     = $('progressLog');
+const resultsEmpty    = $('resultsEmpty');
+const resultsWrap     = $('resultsWrap');
+const candidateList   = $('candidateList');
+const clearResultsBtn = $('clearResultsBtn');
+const additionalAttrsTa    = $('additionalAttrsTa');
+const additionalAttrsSaved = $('additionalAttrsSavedMsg');
+const saveAdditionalAttrsBtn = $('saveAdditionalAttrsBtn');
+const locationFilterEl = $('locationFilter');
+const keywordFilterEl  = $('keywordFilter');
+
+// Stats
+const sTotalCandidates   = $('sTotalCandidates');
+const sTopTier           = $('sTopTier');
+const sStrong            = $('sStrong');
+const sMaybe             = $('sMaybe');
+const sPossibleLowerRole = $('sPossibleLowerRole');
+const sDoNotPursue       = $('sDoNotPursue');
+
+// ‚îÄ‚îÄ Boot ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+(async function init() {
+  await Promise.all([
+    loadRequisitions(),
+    loadScoringModels(),
+    loadCandidateProfiles()
+  ]);
+  setupEventListeners();
+})();
+
+// ‚îÄ‚îÄ Load Scoring Models ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+async function loadScoringModels() {
+  try {
+    scoringModels = await api('/api/scoring-models');
+    const sel = $('scoringModelSelect');
+    scoringModels.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.name;
+      sel.appendChild(opt);
+    });
+  } catch (err) { console.error('Failed to load scoring models', err); }
+}
+
+// ‚îÄ‚îÄ Load Candidate Profiles ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+async function loadCandidateProfiles() {
+  try {
+    candidateProfiles = await api('/api/candidate-profiles');
+    const sel = $('candidateProfileSelect');
+    candidateProfiles.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name;
+      sel.appendChild(opt);
+    });
+  } catch (err) { console.error('Failed to load candidate profiles', err); }
+}
+
+// ‚îÄ‚îÄ Load Requisitions ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+async function loadRequisitions() {
+  try {
+    const data = await api('/api/requisitions');
+    reqSelect.innerHTML = '<option value="">Select Job Requisition‚Ä¶</option>';
+    data.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value       = r.id;
+      opt.textContent = r.jobTitle;
+      reqSelect.appendChild(opt);
+    });
+  } catch (err) {
+    console.error('Failed to load requisitions:', err);
+  }
+}
+
+// ‚îÄ‚îÄ Select Requisition ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+async function selectRequisition(jobId) {
+  if (!jobId) {
+    currentJobId = null;
+    emptyState.classList.remove('hidden');
+    mainContent.classList.add('hidden');
+    return;
+  }
+
+  currentJobId = jobId;
+
+  // ‚îÄ‚îÄ Immediately clear previous job's results so they don't bleed across ‚îÄ‚îÄ
+  allResults = [];
+  pendingFiles = [];
+  narrativeTa.value = '';
+  additionalAttrsTa.value = '';
+  progressWrap.classList.add('hidden');
+  progressLog.innerHTML = '';
+  // Reset filters
+  activeFilter = 'all';
+  locationFilter = '';
+  keywordFilter = '';
+  if (locationFilterEl) locationFilterEl.value = '';
+  if (keywordFilterEl) keywordFilterEl.value = '';
+  document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+  const allPill = document.querySelector('.filter-pill[data-filter="all"]');
+  if (allPill) allPill.classList.add('active');
+  renderResults();
+  renderFileList();
+
+  // Find the requisition data
+  const all = await api('/api/requisitions');
+  const job = all.find(r => r.id === jobId);
+  if (!job) return;
+
+  // Populate job details
+  $('dPropertyName').textContent = job.propertyName;
+  $('dRole').textContent         = job.role;
+  $('dCityState').textContent    = job.cityState;
+  $('dJobId').textContent        = `#${job.id}`;
+  $('dContextType').textContent  = contextTypeLabel(job.contextType);
+
+  // Set scoring model + candidate profile dropdowns
+  $('scoringModelSelect').value     = job.scoringModel     || '';
+  $('candidateProfileSelect').value = job.candidateProfile || '';
+
+  // Load narrative (Perfect Candidate Profile text)
+  const { narrative } = await api(`/api/narrative/${jobId}`);
+  narrativeTa.value = narrative || '';
+
+  // Load additional attributes
+  const { text: additionalAttrsText } = await api(`/api/additional-attributes/${jobId}`);
+  additionalAttrsTa.value = additionalAttrsText || '';
+
+  // Load results
+  allResults = await api(`/api/results/${jobId}`);
+  renderResults();
+
+  // Reset upload area
+  pendingFiles = [];
+  renderFileList();
+
+  // Show main
+  emptyState.classList.add('hidden');
+  mainContent.classList.remove('hidden');
+}
+
+function contextTypeLabel(type) {
+  const map = { '55+': '55+ / Active Adult', 'lease-up': 'Lease-Up', 'stabilized': 'Stabilized Asset' };
+  return map[type] || type || '‚Äî';
+}
+
+// ‚îÄ‚îÄ Event Listeners ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+function setupEventListeners() {
+  // Requisition dropdown
+  reqSelect.addEventListener('change', () => selectRequisition(reqSelect.value));
+
+  // Scoring model dropdown ‚Äî save selection to server
+  $('scoringModelSelect').addEventListener('change', async () => {
+    if (!currentJobId) return;
+    const val = $('scoringModelSelect').value;
+    await api(`/api/requisitions/${currentJobId}`, 'PATCH', { scoringModel: val || null });
+  });
+
+  // Candidate profile dropdown ‚Äî save selection + offer to populate textarea
+  $('candidateProfileSelect').addEventListener('change', async () => {
+    if (!currentJobId) return;
+    const val = $('candidateProfileSelect').value;
+    await api(`/api/requisitions/${currentJobId}`, 'PATCH', { candidateProfile: val || null });
+
+    if (val) {
+      const profile = candidateProfiles.find(p => p.id === val);
+      if (profile && profile.text) {
+        const current = narrativeTa.value.trim();
+        if (!current || confirm('Load this profile into the Additional Attributes field? (Your current text will be replaced.)')) {
+          narrativeTa.value = profile.text;
+          // Auto-save
+          await api(`/api/narrative/${currentJobId}`, 'POST', { narrative: narrativeTa.value });
+          narrativeSaved.classList.remove('hidden');
+          setTimeout(() => narrativeSaved.classList.add('hidden'), 2500);
+        }
+      }
+    }
+  });
+
+  // Narrative save
+  saveNarrBtn.addEventListener('click', saveNarrative);
+
+  // File upload ‚Äî browse button
+  browseBtn.addEventListener('click', () => fileInput.click());
+  uploadZone.addEventListener('click', (e) => {
+    if (e.target === uploadZone || e.target.closest('.upload-zone-inner')) {
+      fileInput.click();
+    }
+  });
+
+  fileInput.addEventListener('change', () => {
+    addFiles(Array.from(fileInput.files));
+    fileInput.value = ''; // reset so same file can be re-selected
+  });
+
+  // Drag & drop
+  uploadZone.addEventListener('dragover',  (e) => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+  uploadZone.addEventListener('dragleave', ()  => uploadZone.classList.remove('drag-over'));
+  uploadZone.addEventListener('drop',      (e) => {
+    e.preventDefault();
+    uploadZone.classList.remove('drag-over');
+    addFiles(Array.from(e.dataTransfer.files));
+  });
+
+  // Analyze
+  analyzeBtn.addEventListener('click', analyzeResumes);
+
+  // Clear files
+  clearFilesBtn.addEventListener('click', () => {
+    pendingFiles = [];
+    renderFileList();
+  });
+
+  // Clear results
+  clearResultsBtn.addEventListener('click', async () => {
+    if (!confirm('Clear all candidate results for this requisition?')) return;
+    await api(`/api/results/${currentJobId}`, 'DELETE');
+    allResults = [];
+    renderResults();
+  });
+
+  // Add Requisition modal
+  $('addReqBtn').addEventListener('click',    () => openAddReqModal());
+  $('addReqClose').addEventListener('click',  () => closeAddReqModal());
+  $('addReqCancel').addEventListener('click', () => closeAddReqModal());
+  $('addReqOverlay').addEventListener('click',() => closeAddReqModal());
+  $('addReqSave').addEventListener('click',   () => saveNewRequisition());
+
+  // Candidate detail modal
+  $('candidateModalClose').addEventListener('click',  () => closeCandidateModal());
+  $('candidateOverlay').addEventListener('click',     () => closeCandidateModal());
+
+  // Filter pills
+  document.querySelectorAll('.filter-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      activeFilter = pill.dataset.filter;
+      renderCandidateList();
+    });
+  });
+
+  // Location filter dropdown
+  if (locationFilterEl) {
+    locationFilterEl.addEventListener('change', () => {
+      locationFilter = locationFilterEl.value;
+      renderCandidateList();
+    });
+  }
+
+  // Keyword filter dropdown
+  if (keywordFilterEl) {
+    keywordFilterEl.addEventListener('change', () => {
+      keywordFilter = keywordFilterEl.value;
+      renderCandidateList();
+    });
+  }
+
+  // Save additional attributes
+  if (saveAdditionalAttrsBtn) {
+    saveAdditionalAttrsBtn.addEventListener('click', saveAdditionalAttributes);
+  }
+}
+
+// ‚îÄ‚îÄ Save Narrative ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+async function saveNarrative() {
+  if (!currentJobId) return;
+  try {
+    await api(`/api/narrative/${currentJobId}`, 'POST', { narrative: narrativeTa.value });
+    narrativeSaved.classList.remove('hidden');
+    setTimeout(() => narrativeSaved.classList.add('hidden'), 2500);
+  } catch (err) {
+    alert('Failed to save profile. Please try again.');
+  }
+}
+
+// ‚îÄ‚îÄ Save Additional Attributes ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+async function saveAdditionalAttributes() {
+  if (!currentJobId) return;
+  try {
+    await api(`/api/additional-attributes/${currentJobId}`, 'POST', { text: additionalAttrsTa.value });
+    additionalAttrsSaved.classList.remove('hidden');
+    setTimeout(() => additionalAttrsSaved.classList.add('hidden'), 2500);
+  } catch (err) {
+    alert('Failed to save. Please try again.');
+  }
+}
+
+// ‚îÄ‚îÄ File Management ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+function addFiles(files) {
+  const allowed = /\.(pdf|doc|docx|txt)$/i;
+  files.forEach(f => {
+    if (!allowed.test(f.name)) return; // skip unsupported
+    if (!pendingFiles.find(p => p.name === f.name && p.size === f.size)) {
+      pendingFiles.push(f);
+    }
+  });
+  renderFileList();
+}
+
+function removeFile(index) {
+  pendingFiles.splice(index, 1);
+  renderFileList();
+}
+
+function renderFileList() {
+  fileList.innerHTML = '';
+  if (pendingFiles.length === 0) {
+    fileList.classList.add('hidden');
+    uploadActions.style.display = 'none';
+    return;
+  }
+
+  fileList.classList.remove('hidden');
+  uploadActions.style.display = 'flex';
+
+  pendingFiles.forEach((f, i) => {
+    const item = document.createElement('div');
+    item.className = 'file-item';
+    item.innerHTML = `
+      <span class="file-item-icon">${fileIcon(f.name)}</span>
+      <span class="file-item-name">${esc(f.name)}</span>
+      <span class="file-item-size">${formatBytes(f.size)}</span>
+      <button class="file-item-remove" title="Remove">‚úï</button>
+    `;
+    item.querySelector('.file-item-remove').addEventListener('click', () => removeFile(i));
+    fileList.appendChild(item);
+  });
+}
+
+function fileIcon(name) {
+  if (/\.pdf$/i.test(name))  return 'üìÑ';
+  if (/\.docx?$/i.test(name)) return 'üìù';
+  return 'üìÉ';
+}
+
+function formatBytes(b) {
+  if (b < 1024)       return `${b} B`;
+  if (b < 1048576)    return `${(b/1024).toFixed(0)} KB`;
+  return `${(b/1048576).toFixed(1)} MB`;
+}
+
+// ‚îÄ‚îÄ Analyze Resumes ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+async function analyzeResumes() {
+  if (!currentJobId || pendingFiles.length === 0) return;
+
+  analyzeBtn.disabled   = true;
+  analyzeBtn.textContent = '‚è≥ Analyzing‚Ä¶';
+  progressWrap.classList.remove('hidden');
+  progressFill.style.width = '0%';
+  progressLog.innerHTML   = '';
+  progressLabel.textContent = 'Sending resumes to AI‚Ä¶';
+  progressCount.textContent = `0 / ${pendingFiles.length}`;
+
+  const formData = new FormData();
+  pendingFiles.forEach(f => formData.append('resumes', f));
+
+  const newResults = [];
+
+  try {
+    const response = await fetch(`/api/analyze/${currentJobId}`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error || 'Server error');
+    }
+
+    const reader  = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer    = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop();
+
+      for (const part of parts) {
+        if (!part.startsWith('data: ')) continue;
+        try {
+          const ev = JSON.parse(part.slice(6));
+          handleAnalysisEvent(ev, newResults);
+        } catch (e) { /* ignore parse errors */ }
+      }
+    }
+  } catch (err) {
+    logProgress('error', `Error: ${err.message}`);
+  }
+
+  // Merge new results
+  if (newResults.length > 0) {
+    allResults = await api(`/api/results/${currentJobId}`);
+    renderResults();
+  }
+
+  progressLabel.textContent  = '‚úÖ Analysis complete';
+  analyzeBtn.disabled        = false;
+  analyzeBtn.textContent     = 'üîç Analyze Resumes';
+
+  // Clear pending files
+  pendingFiles = [];
+  renderFileList();
+}
+
+function handleAnalysisEvent(ev, newResults) {
+  switch (ev.type) {
+    case 'progress':
+      progressLabel.textContent = `Analyzing: ${ev.fileName}`;
+      progressCount.textContent = `${ev.current} / ${ev.total}`;
+      progressFill.style.width  = `${Math.round((ev.current / ev.total) * 90)}%`;
+      break;
+
+    case 'result':
+      newResults.push(ev.result);
+      logProgress('done', `‚úì ${ev.result.candidateName || ev.result.fileName} ‚Äî Score: ${ev.result.totalScore}`);
+      progressFill.style.width = `${Math.round((newResults.length / (newResults.length + 1)) * 100)}%`;
+      break;
+
+    case 'skipped':
+      logProgress('skip', `‚Ü∑ ${ev.fileName} ‚Äî Already analyzed`);
+      break;
+
+    case 'error':
+      logProgress('error', `‚úó ${ev.fileName} ‚Äî ${ev.error}`);
+      break;
+
+    case 'complete':
+      progressFill.style.width = '100%';
+      progressCount.textContent = `${ev.newCount} new / ${ev.errors?.length || 0} errors`;
+      break;
+
+    case 'fatal':
+      logProgress('error', `Fatal error: ${ev.error}`);
+      break;
+  }
+}
+
+function logProgress(type, msg) {
+  const item = document.createElement('div');
+  item.className = `progress-log-item ${type}`;
+  item.textContent = msg;
+  progressLog.appendChild(item);
+  progressLog.scrollTop = progressLog.scrollHeight;
+}
+
+// ‚îÄ‚îÄ Render Results ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+function renderResults() {
+  updateStats();
+  renderCandidateList();
+
+  const hasResults = allResults.length > 0;
+  resultsEmpty.classList.toggle('hidden', hasResults);
+  resultsWrap.classList.toggle('hidden', !hasResults);
+  clearResultsBtn.style.display = hasResults ? '' : 'none';
+}
+
+function updateStats() {
+  sTotalCandidates.textContent   = allResults.length;
+  sTopTier.textContent           = allResults.filter(r => r.recommendation === 'TOP TIER').length;
+  sStrong.textContent            = allResults.filter(r => r.recommendation === 'STRONG').length;
+  sMaybe.textContent             = allResults.filter(r => r.recommendation === 'MAYBE').length;
+  sPossibleLowerRole.textContent = allResults.filter(r => r.recommendation === 'POSSIBLE LOWER ROLE' || r.recommendation === 'WEAK').length;
+  sDoNotPursue.textContent       = allResults.filter(r => r.recommendation === 'DO NOT PURSUE').length;
+}
+
+function renderCandidateList() {
+  let filtered = allResults;
+
+  // Recommendation filter
+  if (activeFilter !== 'all') {
+    filtered = filtered.filter(r => {
+      if (activeFilter === 'POSSIBLE LOWER ROLE') {
+        return r.recommendation === 'POSSIBLE LOWER ROLE' || r.recommendation === 'WEAK';
+      }
+      return r.recommendation === activeFilter;
+    });
+  }
+
+  // Location filter
+  if (locationFilter) {
+    filtered = filtered.filter(r => matchesLocation(r, locationFilter));
+  }
+
+  // Keyword filter
+  if (keywordFilter) {
+    filtered = filtered.filter(r => matchesKeyword(r, keywordFilter));
+  }
+
+  candidateList.innerHTML = '';
+
+  if (filtered.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'results-empty';
+    empty.textContent = 'No candidates match this filter.';
+    candidateList.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement('div');
+  list.className = 'candidate-list';
+
+  filtered.forEach((candidate, idx) => {
+    // rank is position in the full allResults array
+    const globalRank = allResults.indexOf(candidate) + 1;
+    list.appendChild(buildCandidateCard(candidate, globalRank));
+  });
+
+  candidateList.appendChild(list);
+}
+
+function buildCandidateCard(c, rank) {
+  const card = document.createElement('div');
+  card.className = 'candidate-card';
+  if (c.status === 'hire')     card.classList.add('status-hire');
+  if (c.status === 'pipeline') card.classList.add('status-pipeline');
+
+  const recClass  = recToClass(c.recommendation);
+  const scoreClass = recClass;
+
+  // Use categories from the scoring model stored on this result
+  const scoreBreakdown = getScoreCategories(c.scoringModel).map(cat => ({
+    label: cat.label,
+    score: c.scores?.[cat.key]?.score || 0,
+    max:   cat.max
+  }));
+
+  const barsHtml = scoreBreakdown.map(b => `
+    <div class="score-bar-row">
+      <span class="score-bar-label">${b.label}</span>
+      <div class="score-bar-track">
+        <div class="score-bar-fill" style="width:${Math.round((b.score/b.max)*100)}%"></div>
+      </div>
+      <span class="score-bar-val">${b.score}/${b.max}</span>
+    </div>
+  `).join('');
+
+  const strengthsHtml = (c.keyStrengths || []).slice(0, 3).map(s => `<li>${esc(s)}</li>`).join('');
+  const gapsHtml      = (c.keyGaps     || []).slice(0, 2).map(g => `<li>${esc(g)}</li>`).join('');
+  const rankClass     = rank <= 3 ? `rank-${rank}` : '';
+
+  // HIRE / PIPELINE button states
+  const hireActive     = c.status === 'hire';
+  const pipelineActive = c.status === 'pipeline';
+
+  const statusBannerHtml = c.status ? `
+    <div class="status-banner ${c.status === 'hire' ? 'status-banner-hire' : 'status-banner-pipeline'}">
+      ${c.status === 'hire' ? '‚úÖ Marked for Hire' : 'üìã Added to Pipeline'}
+    </div>` : '';
+
+  card.innerHTML = `
+    ${statusBannerHtml}
+    <div class="candidate-card-top">
+      <div class="rank-badge ${rankClass}">${rank}</div>
+      <div class="candidate-info">
+        <div class="candidate-name">${esc(c.candidateName || 'Unknown Candidate')}</div>
+        <div class="candidate-title">${esc(c.currentTitle || '')}${c.currentCompany ? ` ¬∑ ${esc(c.currentCompany)}` : ''}</div>
+      </div>
+      <div class="candidate-score-area">
+        <div class="score-circle ${scoreClass}">${c.totalScore ?? '‚Äî'}</div>
+        <span class="rec-badge ${recClass}">${esc(c.recommendationLabel || c.recommendation || '‚Äî')}</span>
+      </div>
+    </div>
+
+    <div class="score-bars">${barsHtml}</div>
+
+    <div class="candidate-highlights">
+      <div class="highlight-col strengths">
+        <h4>Key Strengths</h4>
+        <ul>${strengthsHtml || '<li>None listed</li>'}</ul>
+      </div>
+      <div class="highlight-col gaps">
+        <h4>Key Gaps</h4>
+        <ul>${gapsHtml || '<li>None identified</li>'}</ul>
+      </div>
+    </div>
+
+    <div class="candidate-card-footer">
+      <div class="candidate-meta">
+        ${c.candidateLocation ? `<span>üìç ${esc(c.candidateLocation)}</span>` : ''}
+        ${c.yearsExperience ? `<span>üìÖ ${c.yearsExperience} yrs exp</span>` : ''}
+        ${c.unitCounts      ? `<span>üè† ${esc(c.unitCounts)}</span>`         : ''}
+        ${c.pmSystems && c.pmSystems.length ? `<span>üíª ${c.pmSystems.slice(0,2).map(esc).join(', ')}</span>` : ''}
+        ${c.totalPenalties  ? `<span style="color:var(--red)">‚ö† ‚àí${c.totalPenalties} pts penalty</span>` : ''}
+        ${has55PlusEmployer(c) ? `<span class="asset-type-badge asset-55plus" style="font-size:.74rem">55+ Asset Type</span>` : ''}
+      </div>
+      <div class="candidate-card-footer-actions">
+        <button class="btn btn-sm btn-hp btn-hire  ${hireActive     ? 'active' : ''}" title="${hireActive ? 'Click to undo' : 'Mark as Hire'}">
+          ‚úÖ Hire
+        </button>
+        <button class="btn btn-sm btn-hp btn-pipeline ${pipelineActive ? 'active' : ''}" title="${pipelineActive ? 'Click to undo' : 'Add to Pipeline'}">
+          üìã Pipeline
+        </button>
+        <button class="btn btn-sm btn-outline view-detail-btn">View Full Analysis</button>
+        <button class="btn btn-sm btn-outline-danger remove-candidate-btn">Remove</button>
+      </div>
+    </div>
+  `;
+
+  // HIRE button
+  card.querySelector('.btn-hire').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const newStatus = c.status === 'hire' ? null : 'hire';
+    await setCandidateStatus(c, newStatus);
+  });
+
+  // PIPELINE button
+  card.querySelector('.btn-pipeline').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const newStatus = c.status === 'pipeline' ? null : 'pipeline';
+    await setCandidateStatus(c, newStatus);
+  });
+
+  card.querySelector('.view-detail-btn').addEventListener('click', () => openCandidateModal(c));
+
+  card.querySelector('.remove-candidate-btn').addEventListener('click', async () => {
+    if (!confirm(`Remove ${c.candidateName} from results?`)) return;
+    await api(`/api/results/${currentJobId}/${c.id}`, 'DELETE');
+    allResults = allResults.filter(r => r.id !== c.id);
+    renderResults();
+  });
+
+  return card;
+}
+
+// ‚îÄ‚îÄ Set Candidate Status (hire / pipeline / null) ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+async function setCandidateStatus(candidate, newStatus) {
+  try {
+    await api(`/api/results/${currentJobId}/${candidate.id}`, 'PATCH', { status: newStatus });
+    // Update local state
+    const local = allResults.find(r => r.id === candidate.id);
+    if (local) local.status = newStatus;
+    candidate.status = newStatus;
+    renderResults();
+  } catch (err) {
+    console.error('Failed to update status:', err);
+  }
+}
+
+// ‚îÄ‚îÄ Candidate Detail Modal ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+function openCandidateModal(c) {
+  $('candidateModalTitle').textContent = c.candidateName || 'Candidate Analysis';
+
+  const recClass = recToClass(c.recommendation);
+
+  const scoreRows = getScoreCategories(c.scoringModel, true).map(row => {
+    const s = c.scores?.[row.key] || {};
+    return `
+      <tr>
+        <td>${row.label}</td>
+        <td class="score-cell">${s.score ?? '‚Äî'} / ${row.max}</td>
+        <td>${esc(s.rationale || '‚Äî')}</td>
+        <td class="evidence-cell">${esc(s.evidence || '‚Äî')}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const penaltyHtml = c.penalties && c.penalties.length
+    ? `<div class="penalty-list">
+        ${c.penalties.map(p => `
+          <div class="penalty-item">${p.deduction} pts: ${esc(p.reason)}</div>
+        `).join('')}
+       </div>`
+    : '<span style="color:var(--muted);font-size:.82rem">No penalties applied.</span>';
+
+  const contactLine = [c.candidateEmail, c.candidatePhone].filter(Boolean).join(' ¬∑ ');
+
+  $('candidateModalBody').innerHTML = `
+    <div class="detail-score-hero">
+      <div class="detail-score-circle score-circle ${recClass}">
+        <span class="score-num">${c.totalScore ?? '‚Äî'}</span>
+        <span class="score-max">/ 100</span>
+      </div>
+      <div class="detail-candidate-info">
+        <div class="name">${esc(c.candidateName || 'Unknown')}</div>
+        <div class="title">${esc(c.currentTitle || '')}${c.currentCompany ? ` ¬∑ ${esc(c.currentCompany)}` : ''}</div>
+        ${contactLine ? `<div class="contact">${esc(contactLine)}</div>` : ''}
+        <div style="margin-top:8px">
+          <span class="rec-badge ${recClass}">${esc(c.recommendationLabel || c.recommendation)}</span>
+          ${c.yearsExperience ? `<span style="font-size:.78rem;color:var(--muted);margin-left:10px">${c.yearsExperience} yrs multifamily exp</span>` : ''}
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-section-title">Score Breakdown</div>
+      <table class="detail-score-table">
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th>Score</th>
+            <th>Rationale</th>
+            <th>Evidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${scoreRows}
+          <tr style="background:var(--bg)">
+            <td><strong>Subtotal</strong></td>
+            <td class="score-cell"><strong>${c.subtotal ?? '‚Äî'} / 100</strong></td>
+            <td colspan="2"></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-section-title">Penalties Applied</div>
+      ${penaltyHtml}
+      ${c.totalPenalties ? `<div style="margin-top:8px;font-size:.82rem;font-weight:700;color:var(--red)">Total Deduction: ‚àí${c.totalPenalties} pts ‚Üí Final Score: <strong>${c.totalScore}</strong></div>` : ''}
+    </div>
+
+    ${c.fitSummary ? `
+    <div class="detail-section">
+      <div class="detail-section-title">Fit Summary</div>
+      <div class="fit-summary-box">${esc(c.fitSummary)}</div>
+    </div>
+    ` : ''}
+
+    ${c.narrativeAlignment ? `
+    <div class="detail-section">
+      <div class="detail-section-title">Perfect Candidate Alignment</div>
+      <div class="narrative-alignment-box">${esc(c.narrativeAlignment)}</div>
+    </div>
+    ` : ''}
+
+    <div class="detail-section">
+      <div class="detail-section-title">Key Details</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <div style="font-size:.74rem;font-weight:700;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Property Systems</div>
+          <div style="font-size:.84rem">${c.pmSystems && c.pmSystems.length ? c.pmSystems.map(esc).join(', ') : '<span style="color:var(--red)">None listed ‚Äî penalty applied</span>'}</div>
+        </div>
+        <div>
+          <div style="font-size:.74rem;font-weight:700;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Portfolio Size</div>
+          <div style="font-size:.84rem">${c.unitCounts ? esc(c.unitCounts) : '<span style="color:var(--muted)">Not specified</span>'}</div>
+        </div>
+        ${c.candidateLocation ? `
+        <div>
+          <div style="font-size:.74rem;font-weight:700;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Location</div>
+          <div style="font-size:.84rem">${esc(c.candidateLocation)}</div>
+        </div>` : ''}
+      </div>
+    </div>
+
+    ${c.employerHistory && c.employerHistory.length ? `
+    <div class="detail-section">
+      <div class="detail-section-title">Employer History &amp; Asset Type Classification</div>
+      <table class="detail-score-table">
+        <thead>
+          <tr>
+            <th>Employer / Property</th>
+            <th>Role</th>
+            <th>Asset Type</th>
+            <th>Evidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${c.employerHistory.map(e => `
+            <tr>
+              <td>${esc(e.employer)}</td>
+              <td>${esc(e.role)}</td>
+              <td><span class="asset-type-badge ${assetTypeBadgeClass(e.assetType)}">${esc(e.assetType)}</span></td>
+              <td class="evidence-cell">${esc(e.evidence || '‚Äî')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>` : ''}
+
+    <div style="text-align:right;margin-top:8px">
+      <span style="font-size:.74rem;color:var(--muted)">Analyzed from: ${esc(c.fileName)} ¬∑ ${c.analyzedAt ? new Date(c.analyzedAt).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) : ''}</span>
+    </div>
+  `;
+
+  $('candidateModal').classList.remove('hidden');
+}
+
+function closeCandidateModal() {
+  $('candidateModal').classList.add('hidden');
+}
+
+// ‚îÄ‚îÄ Add Requisition Modal ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+function openAddReqModal() {
+  ['nPropertyName','nRole','nCityState','nJobId'].forEach(id => $(id).value = '');
+  $('nContextType').value = 'stabilized';
+  $('addReqError').classList.add('hidden');
+  $('addReqModal').classList.remove('hidden');
+}
+
+function closeAddReqModal() {
+  $('addReqModal').classList.add('hidden');
+}
+
+async function saveNewRequisition() {
+  const propertyName = $('nPropertyName').value.trim();
+  const role         = $('nRole').value.trim();
+  const cityState    = $('nCityState').value.trim();
+  const jobId        = $('nJobId').value.trim();
+  const contextType  = $('nContextType').value;
+
+  if (!propertyName || !role || !cityState || !jobId) {
+    showAddReqError('Please fill in all required fields.');
+    return;
+  }
+
+  try {
+    const newReq = await api('/api/requisitions', 'POST', { propertyName, role, cityState, jobId, contextType });
+    closeAddReqModal();
+    await loadRequisitions();
+    // Auto-select the new requisition
+    reqSelect.value = newReq.id;
+    await selectRequisition(newReq.id);
+  } catch (err) {
+    showAddReqError(err.message || 'Failed to add requisition.');
+  }
+}
+
+function showAddReqError(msg) {
+  const el = $('addReqError');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+// ‚îÄ‚îÄ Score Category Helper ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+// Returns the category config for the scoring model used on a result.
+// Falls back to the 55+ model categories if the model is unknown.
+const SCORE_CATEGORY_MAP = {
+  '55plus-leaseup': [
+    { key: 'scopeAccountability', label: 'Scope',      max: 25 },
+    { key: 'financialOwnership',  label: 'Finance',    max: 20 },
+    { key: 'performanceImpact',   label: 'Impact',     max: 20 },
+    { key: 'leadershipTeamDev',   label: 'Leadership', max: 20 },
+    { key: 'contextMatch',        label: 'Context',    max: 15 },
+  ],
+  'btr-construction': [
+    { key: 'scopeAccountability',    label: 'Scope',        max: 20 },
+    { key: 'financialOwnership',     label: 'Finance',      max: 15 },
+    { key: 'leaseUpPerformance',     label: 'Lease-Up',     max: 30 },
+    { key: 'leadershipTeamBuild',    label: 'Leadership',   max: 20 },
+    { key: 'constructionBTRContext', label: 'Construction', max: 15 },
+  ]
+};
+
+// Full labels for the detail modal table
+const SCORE_CATEGORY_MAP_FULL = {
+  '55plus-leaseup': [
+    { key: 'scopeAccountability', label: 'Scope & Accountability',    max: 25 },
+    { key: 'financialOwnership',  label: 'Financial Ownership',       max: 20 },
+    { key: 'performanceImpact',   label: 'Performance Impact',        max: 20 },
+    { key: 'leadershipTeamDev',   label: 'Leadership & Team Dev.',    max: 20 },
+    { key: 'contextMatch',        label: 'Context Match',             max: 15 },
+  ],
+  'btr-construction': [
+    { key: 'scopeAccountability',    label: 'Scope & Accountability',   max: 20 },
+    { key: 'financialOwnership',     label: 'Financial Ownership',      max: 15 },
+    { key: 'leaseUpPerformance',     label: 'Lease-Up Performance',     max: 30 },
+    { key: 'leadershipTeamBuild',    label: 'Leadership & Team Build',  max: 20 },
+    { key: 'constructionBTRContext', label: 'Construction/BTR Context', max: 15 },
+  ]
+};
+
+function getScoreCategories(modelKey, full = false) {
+  const map = full ? SCORE_CATEGORY_MAP_FULL : SCORE_CATEGORY_MAP;
+  return map[modelKey] || map['55plus-leaseup'];
+}
+
+// ‚îÄ‚îÄ Helpers ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+async function api(url, method = 'GET', body = null) {
+  const opts = { method, headers: {} };
+  if (body) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(url, opts);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+function has55PlusEmployer(c) {
+  return (c.employerHistory || []).some(e =>
+    e.assetType && e.assetType.toLowerCase().includes('55+')
+  );
+}
+
+function assetTypeBadgeClass(type) {
+  if (!type) return '';
+  const t = type.toLowerCase();
+  if (t.includes('55+')) return 'asset-55plus';
+  if (t.includes('btr') || t.includes('lease')) return 'asset-btr';
+  if (t.includes('conventional')) return 'asset-conventional';
+  return 'asset-other';
+}
+
+function recToClass(rec) {
+  const map = {
+    'TOP TIER':            'top-tier',
+    'STRONG':              'strong',
+    'MAYBE':               'maybe',
+    'WEAK':                'weak',          // legacy ‚Äî keep for old results
+    'POSSIBLE LOWER ROLE': 'weak',
+    'DO NOT PURSUE':       'dnp'
+  };
+  return map[rec] || 'maybe';
+}
+
+function esc(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ‚îÄ‚îÄ Filter Helpers ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+const STATE_ABBREVS = {
+  'florida': 'fl', 'louisiana': 'la', 'maryland': 'md',
+  'new jersey': 'nj', 'tennessee': 'tn', 'mississippi': 'ms'
+};
+
+function matchesLocation(result, location) {
+  const loc = location.toLowerCase();
+  const abbrev = STATE_ABBREVS[loc];
+
+  // Build a search string from relevant fields
+  const fields = [
+    result.candidateLocation,
+    result.currentCompany,
+    result.fitSummary,
+    result.candidateEmail,
+    ...(result.employerHistory || []).map(e => `${e.employer} ${e.role}`)
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (fields.includes(loc)) return true;
+  if (abbrev) {
+    // Match state abbreviation with boundaries (e.g. ", FL" or " FL ")
+    const re = new RegExp(`\\b${abbrev}\\b`, 'i');
+    return re.test(fields);
+  }
+  return false;
+}
+
+function matchesKeyword(result, keyword) {
+  const kw = keyword.toLowerCase();
+  // Search across all relevant text fields
+  const fields = [
+    result.candidateName,
+    result.currentTitle,
+    result.currentCompany,
+    result.fitSummary,
+    result.narrativeAlignment,
+    ...(result.keyStrengths || []),
+    ...(result.keyGaps || []),
+    ...(result.employerHistory || []).map(e => `${e.employer} ${e.role} ${e.assetType} ${e.evidence || ''}`),
+    ...(result.pmSystems || [])
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  return fields.includes(kw);
+}
+
+========== public/styles.css ==========
+/* ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
+   RISE Resume Ranking ‚Äî Styles
+   Branding: mirrors rise-commission-dashboard.vercel.app
+   ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê */
+
+/* ‚îÄ‚îÄ Variables ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+:root {
+  --navy:    #1B2A4A;
+  --blue:    #2E86AB;
+  --green:   #28a745;
+  --amber:   #e6a817;
+  --orange:  #e07b39;
+  --red:     #dc3545;
+  --bg:      #f4f6f9;
+  --card:    #fff;
+  --border:  #e0e4e8;
+  --text:    #333;
+  --muted:   #6c757d;
+  --shadow:  0 2px 8px rgba(0,0,0,.08);
+  --shadow-h:0 4px 16px rgba(0,0,0,.12);
+  --radius:  10px;
+  --radius-s:6px;
+}
+
+/* ‚îÄ‚îÄ Reset & Base ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ‚îÄ‚îÄ Header ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.header {
+  background: var(--navy);
+  padding: 0 24px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0,0,0,.25);
+}
+
+.header-inner {
+  max-width: 1340px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 62px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.logo-mark {
+  width: 38px;
+  height: 38px;
+  background: var(--blue);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: #fff;
+  letter-spacing: -0.5px;
+  flex-shrink: 0;
+}
+
+.header-h1 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.header-sub {
+  display: block;
+  font-size: 0.72rem;
+  color: rgba(255,255,255,.6);
+  margin-top: 1px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.view-as-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.view-as-label {
+  color: rgba(255,255,255,.75);
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.req-select {
+  background: rgba(255,255,255,.12);
+  border: 1px solid rgba(255,255,255,.25);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 7px 32px 7px 12px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='white' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  min-width: 230px;
+  transition: border-color .15s;
+}
+
+.req-select:focus { outline: none; border-color: var(--blue); }
+
+.req-select option {
+  background: var(--navy);
+  color: #fff;
+}
+
+/* ‚îÄ‚îÄ Buttons ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border-radius: var(--radius-s);
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.btn:active { transform: translateY(1px); }
+
+.btn-primary    { background: var(--green);  color: #fff; }
+.btn-primary:hover { background: #218838; }
+
+.btn-secondary  { background: var(--blue);   color: #fff; }
+.btn-secondary:hover { background: #266c8a; }
+
+.btn-navy       { background: var(--navy);   color: #fff; }
+.btn-navy:hover { background: #152238; }
+
+.btn-outline {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text);
+}
+.btn-outline:hover { background: var(--bg); }
+
+.btn-outline-white {
+  background: transparent;
+  border-color: rgba(255,255,255,.4);
+  color: rgba(255,255,255,.9);
+}
+.btn-outline-white:hover { background: rgba(255,255,255,.1); }
+
+.btn-outline-danger {
+  background: transparent;
+  border-color: #f5c6cb;
+  color: var(--red);
+}
+.btn-outline-danger:hover { background: #fff5f5; }
+
+.btn-danger  { background: var(--red);   color: #fff; }
+.btn-sm { padding: 5px 12px; font-size: 0.78rem; }
+
+/* ‚îÄ‚îÄ Layout ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.main {
+  max-width: 1340px;
+  margin: 0 auto;
+  padding: 24px 24px 60px;
+}
+
+.grid { display: grid; gap: 16px; }
+.g2 { grid-template-columns: repeat(2, 1fr); }
+.mb { margin-bottom: 16px; }
+
+/* ‚îÄ‚îÄ Card ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.card {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 22px 24px;
+  transition: box-shadow .15s;
+}
+
+.card-hdr {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+.card-icon { font-size: 1.1rem; }
+
+.card-hdr h3 {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--navy);
+}
+
+.card-subtitle {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-left: 2px;
+}
+
+.card-hdr-actions { margin-left: auto; }
+
+/* ‚îÄ‚îÄ Job Details ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.job-details { display: flex; flex-direction: column; gap: 10px; }
+
+.jd-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-radius: var(--radius-s);
+}
+
+.jd-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.jd-val {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--navy);
+}
+
+/* ‚îÄ‚îÄ Inline Dropdowns in Job Details ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.jd-row-select {
+  align-items: center;
+  gap: 12px;
+}
+
+.jd-select {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 28px 6px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-s);
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--navy);
+  background: #fff;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%231B2A4A' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  cursor: pointer;
+  transition: border-color .15s;
+}
+
+.jd-select:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(46,134,171,.15);
+}
+
+/* ‚îÄ‚îÄ Stats ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.stat-box {
+  text-align: center;
+  padding: 14px 8px;
+  background: var(--bg);
+  border-radius: var(--radius-s);
+}
+
+.stat-num {
+  font-size: 1.9rem;
+  font-weight: 700;
+  color: var(--navy);
+  line-height: 1;
+}
+.stat-num.green  { color: var(--green); }
+.stat-num.blue   { color: var(--blue); }
+.stat-num.amber  { color: var(--amber); }
+.stat-num.orange { color: var(--orange); }
+.stat-num.red    { color: var(--red); }
+
+.stat-lbl {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-top: 5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/* ‚îÄ‚îÄ Narrative ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.narrative-ta {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  padding: 12px 14px;
+  font-family: inherit;
+  font-size: 0.86rem;
+  color: var(--text);
+  resize: vertical;
+  line-height: 1.6;
+  transition: border-color .15s;
+}
+.narrative-ta:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(46,134,171,.15); }
+
+.narrative-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.saved-msg {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--green);
+}
+
+/* ‚îÄ‚îÄ Upload Zone ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  cursor: pointer;
+  transition: all .2s;
+  margin-bottom: 14px;
+}
+
+.upload-zone.drag-over {
+  border-color: var(--blue);
+  background: rgba(46,134,171,.06);
+}
+
+.upload-zone-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 36px 20px;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.upload-arrow {
+  font-size: 2rem;
+  color: var(--blue);
+  margin-bottom: 4px;
+}
+
+.upload-primary {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--navy);
+}
+
+.upload-or {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.upload-types {
+  font-size: 0.74rem;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+/* ‚îÄ‚îÄ File List ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-radius: var(--radius-s);
+  font-size: 0.83rem;
+}
+
+.file-item-icon { color: var(--blue); font-size: 1rem; }
+.file-item-name { flex: 1; font-weight: 500; color: var(--navy); }
+.file-item-size { color: var(--muted); }
+
+.file-item-remove {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color .1s;
+}
+.file-item-remove:hover { color: var(--red); }
+
+/* ‚îÄ‚îÄ Upload Actions ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.upload-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+/* ‚îÄ‚îÄ Progress ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.progress-wrap {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--bg);
+  border-radius: var(--radius-s);
+}
+
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--navy);
+  margin-bottom: 8px;
+}
+
+.progress-track {
+  background: #e9ecef;
+  border-radius: 8px;
+  height: 10px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--blue), var(--green));
+  border-radius: 8px;
+  transition: width .4s ease;
+}
+
+.progress-log {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.progress-log-item {
+  font-size: 0.78rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.progress-log-item.done  { color: var(--green); }
+.progress-log-item.error { color: var(--red); }
+.progress-log-item.skip  { color: var(--amber); }
+
+/* ‚îÄ‚îÄ Profile Select Row ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.profile-select-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border-radius: var(--radius-s);
+  margin-bottom: 14px;
+}
+
+.profile-select-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+/* ‚îÄ‚îÄ Filter Section ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.filter-section {
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.filter-row {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.filter-group-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+
+.filter-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.filter-pill {
+  padding: 5px 14px;
+  border-radius: 20px;
+  border: 1.5px solid var(--border);
+  background: transparent;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--muted);
+  transition: all .15s;
+}
+
+.filter-pill:hover { border-color: var(--blue); color: var(--blue); }
+
+.filter-pill.active {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
+}
+
+.filter-select {
+  padding: 6px 28px 6px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-s);
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--navy);
+  background: #fff;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%231B2A4A' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  cursor: pointer;
+  transition: border-color .15s;
+  min-width: 150px;
+}
+
+.filter-select:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(46,134,171,.15);
+}
+
+/* ‚îÄ‚îÄ Asset Type Badges ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.asset-type-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.asset-55plus {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.asset-btr {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.asset-conventional {
+  background: #f3e5f5;
+  color: #6a1b9a;
+}
+
+.asset-other {
+  background: var(--bg);
+  color: var(--muted);
+}
+
+/* ‚îÄ‚îÄ Candidate Cards ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.candidate-list { display: flex; flex-direction: column; gap: 12px; }
+
+.candidate-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  transition: box-shadow .15s, border-color .15s;
+  background: #fff;
+}
+
+.candidate-card:hover {
+  box-shadow: var(--shadow-h);
+  border-color: #c8d0da;
+}
+
+.candidate-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.rank-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--navy);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.88rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.rank-badge.rank-1 { background: #c9a227; }
+.rank-badge.rank-2 { background: #8d9093; }
+.rank-badge.rank-3 { background: #a0522d; }
+
+.candidate-info { flex: 1; }
+
+.candidate-name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: 2px;
+}
+
+.candidate-title {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.candidate-score-area {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.score-circle {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.score-circle.top-tier  { background: var(--green); }
+.score-circle.strong    { background: var(--blue); }
+.score-circle.maybe     { background: var(--amber); }
+.score-circle.weak      { background: var(--orange); }
+.score-circle.dnp       { background: var(--red); }
+
+/* ‚îÄ‚îÄ Score Bars ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.score-bars { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; }
+
+.score-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.score-bar-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  width: 80px;
+  text-align: right;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.score-bar-track {
+  flex: 1;
+  height: 7px;
+  background: #e9ecef;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.score-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--blue), var(--navy));
+  transition: width .6s ease;
+}
+
+.score-bar-val {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--navy);
+  width: 42px;
+  flex-shrink: 0;
+}
+
+/* ‚îÄ‚îÄ Candidate Highlights ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.candidate-highlights {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.highlight-col h4 {
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.highlight-col.strengths h4 { color: var(--green); }
+.highlight-col.gaps h4      { color: var(--red); }
+
+.highlight-col ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.highlight-col ul li {
+  font-size: 0.8rem;
+  color: var(--text);
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  line-height: 1.4;
+}
+
+.highlight-col.strengths ul li::before {
+  content: '‚úì';
+  color: var(--green);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.highlight-col.gaps ul li::before {
+  content: '‚úó';
+  color: var(--red);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* ‚îÄ‚îÄ Status Banner ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.status-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: var(--radius-s);
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin-bottom: 14px;
+  letter-spacing: 0.3px;
+}
+
+.status-banner-hire {
+  background: #d4edda;
+  color: #155724;
+  border-left: 4px solid var(--green);
+}
+
+.status-banner-pipeline {
+  background: #cce5ff;
+  color: #004085;
+  border-left: 4px solid var(--blue);
+}
+
+/* Status border on the whole card */
+.candidate-card.status-hire     { border-left: 4px solid var(--green); }
+.candidate-card.status-pipeline { border-left: 4px solid var(--blue); }
+
+/* ‚îÄ‚îÄ HIRE / PIPELINE Buttons ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.btn-hp {
+  border: 2px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  transition: all .15s;
+}
+
+.btn-hire:hover,
+.btn-hire.active {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+}
+
+.btn-pipeline:hover,
+.btn-pipeline.active {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+
+/* ‚îÄ‚îÄ Candidate Card Footer ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.candidate-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.candidate-meta {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.candidate-meta span {
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.candidate-card-footer-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ‚îÄ‚îÄ Rec Badges ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.rec-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 12px;
+  border-radius: 20px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.rec-badge.top-tier { background: #d4edda; color: #155724; }
+.rec-badge.strong   { background: #cce5ff; color: #004085; }
+.rec-badge.maybe    { background: #fff3cd; color: #856404; }
+.rec-badge.weak     { background: #ffe5cc; color: #7a3b00; }
+.rec-badge.dnp      { background: #f8d7da; color: #721c24; }
+
+/* ‚îÄ‚îÄ Penalty List ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.penalty-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.penalty-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--red);
+}
+
+.penalty-item::before {
+  content: '‚àí';
+  font-weight: 700;
+}
+
+/* ‚îÄ‚îÄ Modal ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; }
+
+.modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  backdrop-filter: blur(2px);
+}
+
+.modal-box {
+  position: relative;
+  z-index: 1;
+  background: #fff;
+  border-radius: var(--radius);
+  box-shadow: 0 20px 60px rgba(0,0,0,.3);
+  width: 100%;
+  max-width: 520px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-lg { max-width: 780px; }
+
+.modal-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--navy);
+}
+
+.modal-hdr h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.modal-x {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,.7);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color .1s;
+}
+.modal-x:hover { color: #fff; }
+
+.modal-body {
+  padding: 22px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.modal-foot {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 16px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+/* ‚îÄ‚îÄ Form ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.fg { margin-bottom: 14px; }
+.fl { display: block; font-size: 0.8rem; font-weight: 600; color: var(--navy); margin-bottom: 5px; }
+.req-star { color: var(--red); }
+.fi {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  font-family: inherit;
+  font-size: 0.86rem;
+  color: var(--text);
+  transition: border-color .15s;
+}
+.fi:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(46,134,171,.15); }
+
+.form-error {
+  background: #f8d7da;
+  color: #721c24;
+  padding: 8px 12px;
+  border-radius: var(--radius-s);
+  font-size: 0.82rem;
+  font-weight: 500;
+  margin-top: 8px;
+}
+
+/* ‚îÄ‚îÄ Detail Modal Content ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.detail-score-hero {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 20px;
+  background: var(--bg);
+  border-radius: var(--radius-s);
+  margin-bottom: 20px;
+}
+
+.detail-score-circle {
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.detail-score-circle .score-num { font-size: 1.6rem; line-height: 1; }
+.detail-score-circle .score-max { font-size: 0.65rem; opacity: .8; }
+
+.detail-candidate-info .name {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--navy);
+}
+.detail-candidate-info .title { font-size: 0.85rem; color: var(--muted); margin-top: 2px; }
+.detail-candidate-info .contact { font-size: 0.8rem; color: var(--muted); margin-top: 4px; }
+
+.detail-section {
+  margin-bottom: 20px;
+}
+
+.detail-section-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-score-table { width: 100%; border-collapse: collapse; }
+.detail-score-table th,
+.detail-score-table td {
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 0.82rem;
+  border-bottom: 1px solid var(--border);
+}
+.detail-score-table th {
+  background: var(--navy);
+  color: #fff;
+  font-weight: 600;
+}
+.detail-score-table tr:nth-child(even) td { background: var(--bg); }
+.detail-score-table td:last-child { color: var(--muted); font-size: 0.78rem; }
+.detail-score-table .score-cell { font-weight: 700; color: var(--navy); }
+.detail-score-table .evidence-cell { font-style: italic; color: var(--muted); font-size: 0.76rem; }
+
+.narrative-alignment-box {
+  background: #f0f8ff;
+  border-left: 4px solid var(--blue);
+  padding: 12px 16px;
+  border-radius: 0 var(--radius-s) var(--radius-s) 0;
+  font-size: 0.84rem;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.fit-summary-box {
+  background: var(--bg);
+  padding: 12px 16px;
+  border-radius: var(--radius-s);
+  font-size: 0.84rem;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+/* ‚îÄ‚îÄ Empty / Hidden ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+.hidden { display: none !important; }
+
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100vh - 62px);
+}
+
+.empty-inner {
+  text-align: center;
+  max-width: 380px;
+  padding: 40px 20px;
+}
+
+.empty-icon {
+  font-size: 3.5rem;
+  margin-bottom: 16px;
+}
+
+.empty-inner h2 {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: 10px;
+}
+
+.empty-inner p {
+  font-size: 0.88rem;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.results-empty {
+  text-align: center;
+  padding: 30px 20px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+/* ‚îÄ‚îÄ Responsive ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ */
+@media (max-width: 900px) {
+  .g2 { grid-template-columns: 1fr; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .candidate-highlights { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 600px) {
+  .header-inner { flex-direction: column; align-items: flex-start; height: auto; padding: 10px 0; gap: 10px; }
+  .main { padding: 16px; }
+  .req-select { min-width: 160px; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+}
